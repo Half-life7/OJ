@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+/bin/
+/coverage.out
+/oj-data/
+/tmp/
+/.cache/
+*.exe

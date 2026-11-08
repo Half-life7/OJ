@@ -1,0 +1,12 @@
+.git
+.cache
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+bin
+tmp
+oj-data
+*.exe
+coverage.out
