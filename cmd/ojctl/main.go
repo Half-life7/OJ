@@ -33,6 +33,8 @@ func run(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	switch args[0] {
+	case "judge":
+		return judgeCommand(ctx, cfg, args[1:])
 	case "migrate":
 		if len(args) != 2 || (args[1] != "up" && args[1] != "version") {
 			return errors.New("usage: ojctl migrate up|version")

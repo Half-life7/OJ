@@ -2,6 +2,84 @@
 
 每批记录目标、实际变更、数据库/API/权限影响、验证命令与结果、遗留项。状态只使用：进行中、已完成、待验证。
 
+## 2026-11-10 — 2D 全链路及真实验收（已完成）
+
+环境：Windows/amd64 开发机；经授权后台启动 Docker Desktop，实际引擎 29.9.3、Linux/amd64。使用独立 Compose 项目 `biue-2d-20261110004742`、新随机测试凭据、独立数据库/Redis/数据卷，未修改其他项目数据。验收入口 `http://localhost:6677`，凭据只保存在 Git/构建上下文排除的 `.cache/2d-acceptance.env`，未打印到日志。
+
+- 完成常驻 worker/dispatcher、独立 judge-runner 与四语言镜像。Worker 先检查就绪，再串联领取、固定请求、租约心跳、阶段 CAS、Runner 流式调用、可信结果校验、原子持久化及 ACK；忙碌/丢租约/未知数据库写入/退出不误消耗执行重试预算。
+- Runner 认证采用独立 Bearer 密钥，客户端禁代理与重定向，生产要求 TLS。持久化执行 journal、请求指纹、Linux 文件锁与新租约接管取消保证同 attempt 不重复启动；重启清理自身 owner 的遗留容器，再重放结果或返回可重试 SystemError。清理失败保留补偿债务并暂停就绪。
+- 四语言代码通过容器 attached stdin 的受控文件包传入，编译产物/资源经每容器 HMAC 签名 stdout 返回。不可变监督程序禁 dumpable、清理子进程环境，隐藏答案从不进入容器。每点全新容器、非 root、禁网/只读 rootfs、cap-drop/no-new-privileges/seccomp、CPU/内存/swap/PID/时间/tmpfs/输出/文件大小/描述符限制，关闭沙箱日志以免重复保存产物/输出。
+- 实际验收修复了 archive API 与活跃 tmpfs 可见性不一致问题，改用流式标准输入输出；修复 Docker OOM 事件接口必须使用数字 Unix 秒/纳秒的问题，并对异步事件短暂延迟进行有界重查。没有通过关闭只读根目录或放宽权限绕过问题。固定 Docker API 1.46，要求 Engine 27+。
+- 新增迁移 5 消息隔离表：只保存消息 ID/摘要/受控原因，持久化后才 ACK。增加 Redis 丢数据后的普通/死信 Outbox 对账；提供有超级管理员身份/容量/预期 generation 检查及同事务审计的 `ojctl judge dead-list/retry`，保留原 generation 全部历史。
+- Compose 加入 Worker、dispatcher、Runner、四语言镜像准备服务、独立 judge 网络和 runner-data 卷；只有 Runner 获得 Docker Socket，Runner 无数据库密码、不接入 backend、不暴露宿主机端口；TLS 覆盖配置及健康探针齐备。主业务代码仍无宿主机命令执行能力。
+
+实际验证：
+
+| 检查 | 结果 |
+| --- | --- |
+| Windows `go test ./...`、`go vet ./...`、`go build ./...`、`go test -race ./...` | 通过 |
+| Linux 验收容器 `BIUE_DOCKER_TEST=1 go test -race -p 2 ./... -count=1 -timeout=20m` | 通过，包含实际 Docker 执行，非跳过 |
+| Node 页面回归 | 16 项通过 |
+| `go mod verify` | 所有模块校验通过 |
+| Compose 普通/TLS 静态配置、角色/网络/Socket/密钥分离校验 | 通过 |
+| MySQL 空库迁移、重复 `migrate up` | 当前版本 5，dirty=false |
+| 实际 CHECK、历史外键、重复 Outbox 唯一约束 | 分别验证错误 3819、1451、1062；测试操作事务回滚 |
+| 四语言经真实 Web→Redis→Worker→Runner→MySQL | C++17/Go/Python3/Java 均 Accepted、100 分；Run 输出 42、零分 |
+| HTTP 终态持久化及输出限制 | CE/WA/RE/TLE/MLE、Run 输出超限全部通过 |
+| 实际沙箱边界 | 非 root、只读根目录、禁网、监督程序 secret 隔离、输出/PID/文件大小/描述符限制通过 |
+| 固定版本 | 等待中修改题面、样例和数据指针，旧 Submit 仍使用原版本，旧 Run 保持创建时输入 |
+| Worker/Runner SIGKILL | 均自动恢复并最终 Accepted，旧执行未覆盖新尝试 |
+| 三次重试及第四次失败 | 真实数据不可用产生恰好四次失败、SystemError、持久化死信及死信流 |
+| 死信人工重判 | 创建新 generation 后 Accepted，旧 SystemError 结果保留，审计同事务 |
+| 重复终态消息 | ACK 后结果历史数量不变 |
+| Redis FLUSHDB | MySQL 对账重新派发，原任务最终 Accepted，数据库会话保持可用 |
+| MySQL/Redis 服务重启 | Web 自动恢复就绪，提交/结果/隔离记录数量不变，Redis 消费者组及已确认状态保留 |
+| 非法 Stream 消息 | 实际保存 SHA-256 摘要与原因后 ACK，未保存原始消息 |
+| linux/amd64、linux/arm64 全部 cmd 入口交叉编译 | 通过 |
+| arm64 启动 | 交叉编译 web 在仿真容器启动，/health=200、/ready=200；非原生 arm64 整机验收 |
+
+HTTP 验收元数据保存在 `.cache/2d-smoke-basic.json`、`.cache/2d-smoke-recovery.json`、`.cache/2d-smoke-verdicts.json`，均不含凭据。恢复样本包括固定版本提交 14、Worker 崩溃 17、Runner 崩溃 18、死信/人工重判 19（两代历史）、Redis 丢失恢复 20；最新终态 HTTP 样本 26～31。初次定位问题产生的失败测试历史按保留规则未删除。
+
+验收脚本为 tools/verify_2d.py（可选状态/故障矩阵）、tools/verify_2d_recovery.py、tools/verify_2d_verdicts.py，配置检查为 tools/check_2d_compose.py，真实沙箱用例在 internal/judge_runner/docker_integration_test.go。文档已同步至 README、API、数据库、实施计划及 RUNNER/WORKER/DISPATCH 说明。
+
+剩余范围：批次 3 的身份审核/比赛/计分；完整管理网页、生产容量与长期压力、生产安装升级/备份恢复、原生 arm64 完整部署仍属后续批次。本次没有部署生产公网服务、提交 Git 或发布版本。
+
+## 2026-11-09 — 2D 第四小批：执行重试与死信（已完成，本地验证）
+
+- 新增迁移 4：judge_attempt_failures 按 task/attempt 唯一保存受控失败原因与 retry/dead 决策；judge_dead_letters 保存持久化死信兼 Outbox；普通 Outbox 增加 available_at 和到期索引。ExpectedVersion 升至 4，真实数据库尚未执行迁移。
+- 新增 ExecutionStore.Fail：有效 generation/attempt/token/租约下，前 3 次基础设施失败原子保存失败历史、增加 attempt、清理租约并复位 Pending、创建延迟 1/2/4 秒的新 Outbox；第 4 次同事务保存 SystemError 零分终态、结果历史和死信意图。数据卷/Redis 不可用不阻止 MySQL 失败决策保存。
+- Consumer.Fail 在提交决策后才 ACK；AcknowledgeFailed 查询完整身份的持久化决策并核对 Stream 载荷，支持提交响应未知或 Redis 故障后的补 ACK。旧 attempt 不能重复增加重试次数；普通判题结果不重试。合法 Runner SystemError 经 Consumer.Complete 路由到失败流程，Finish 不允许直接绕过预算保存该状态。
+- dispatcher 扩展独立死信派发至 oj:judge:dead，消息仅带四项任务标识、稳定 dead_letter_id 及原因码；XADD 后登记，允许安全重复投递。每轮分别处理普通与死信意图，普通派发只读取已到 available_at 的意图。
+- 实际通过：go test ./...、go vet ./...、go build ./...、go test -race ./...。测试覆盖全部三次重试的身份与退避参数、事务各步骤回滚、第四次失败终结、失败决策先提交再 ACK、提交未知后的防重复及补 ACK、Redis 恢复、死信非法记录/发送/登记/提交失败、普通派发到期条件、嵌入迁移链及版本门禁；使用工作区 Go 缓存和 GOPROXY=off。
+- 已同步 README、实施计划、Worker/派发/提交说明与数据库文档。无新增 HTTP API、环境变量或 Docker 权限。真实 MySQL DDL/约束/退避与 Redis 重启恢复仍待验收；下一小批对接独立 Runner 与常驻 Worker，死信管理/人工重试、非法消息隔离、对账补投和 Compose 仍待实现。
+
+## 2026-11-09 — 2D 第三小批：固定请求、阶段推进、结果持久化与 ACK（已完成，本地验证）
+
+- 新增 ExecutionStore：按 submission 固定 statement_version/data_version 加载题面限制及测试数据，Run 使用保存的 stdin；Submit 核对数据卷指纹、点数、总字节和总分。
+- 新增阶段推进及结果提交事务，按 submission→task 锁顺序检查 generation/attempt/token/有效期、双方状态与合法流转；清理终态租约，并原子写入 submission_results、submission_case_results 及 submission 汇总。任何失败回滚，终态及迟到旧结果不可覆盖。
+- 新增 Runner 结果契约校验：任务身份、终态、分数、点数、逐点 ID/顺序及资源汇总一致性；Run 永不计分。正式提交在写库前清除输出及非编译诊断，逐点表不保存隐藏输入输出。
+- 新增 WithHeartbeat：执行前续期、TTL/3 心跳、续期失败取消上下文并等待心跳退出；执行器需响应取消。
+- Consumer.Complete 严格先 Finish 再 ACK；AcknowledgeCompleted 先查询完整任务身份/attempt 的持久化终态、核对实际 Stream 消息载荷，再 XACK，支持数据库提交响应丢失或 Redis 故障后的补 ACK。
+- 实际通过：go test ./...、go vet ./...、go build ./...、go test -race ./...。新增测试覆盖真实数据卷读取/摘要核对、阶段重放/倒退、旧 generation/attempt/token、写入时过期、历史/逐点/汇总写入失败回滚、提交结果未知、ACK 前结果证明与载荷核对、Redis 恢复及心跳取消；使用工作区 Go 缓存和 GOPROXY=off。
+- 无新增迁移、HTTP API、环境变量或权限。已同步 README、实施计划、提交及派发说明、Worker 调用与结果契约。真实 MySQL/Redis、跨进程崩溃及容器执行仍待验收；下一小批实现执行重试/死信，后续接入 Runner、常驻 Worker、对账补投与 Compose。
+
+## 2026-11-09 — 2D 第二小批：Worker 消费与租约基础（已完成，本地验证）
+
+- 新增 Queue：从 Stream 起点幂等创建 judgers 组，XAUTOCLAIM 游标扫描未确认消息，非阻塞 XREADGROUP 读取新消息；不提前 ACK，不返回非法消息原始字段。
+- 新增 LeaseStore：submission→task 行锁顺序、当前轮次与状态检查、128 位随机租约、MySQL 时钟过期判断、Pending→Queued 原子更新、过期令牌替换及完整身份/令牌/有效期续期 CAS。
+- 新增 Consumer.Next 串联接收与领取，区分 acquired/busy/obsolete；只有事务提交成功才返回可用租约。没有新增迁移、HTTP API、配置项或容器权限。
+- 测试覆盖组创建前消息、未确认消息恢复、重复领取、非法消息、Redis 故障、旧轮次、终态、状态不一致、事务回滚、续期失效及跨消费者更换令牌且不 ACK 的组合流程。
+- 实际通过：go test ./...、go vet ./...、go build ./...、go test -race ./...；使用工作区 Go 缓存和 GOPROXY=off。同步 README、实施计划、提交说明、派发说明及 docs/WORKER.md。
+- 真实 MySQL 并发/时钟、Redis 重启与跨进程崩溃仍待验证。消费模块尚未接入常驻入口；请求加载、执行阶段推进、心跳循环、结果落库及 ACK、执行重试/死信、Runner、对账补投和 Compose 继续留待后续小批。
+
+## 2026-11-09 — 2D 第一小批：Outbox 派发（已完成，本地验证）
+
+- 新增独立 cmd/dispatcher 与 internal/judge 派发器：MySQL 行锁 SKIP LOCKED 领取已提交意图，XADD 成功后登记 Stream ID，单次操作上下文上限 5 秒；空队列及故障每秒重试。
+- 入口检查迁移版本、dirty 与依赖就绪，支持信号取消；无数据库迁移、HTTP API 或权限变更，无 Docker Socket。
+- 增加 sqlmock/miniredis 测试：成功、空队列、非法信封、Redis 失败、发送后登记失败及提交结果未知；确保只有数据库提交成功才报告派发成功，失败允许重复投递。
+- 实际通过：go test ./...、go vet ./...、go build ./...、go test -race ./...、git diff --check。Go 使用工作区 .cache/gobuild 与 .cache/gomod，GOPROXY=off。
+- 更新 README、实施计划、提交说明及 docs/DISPATCH.md。真实 MySQL 并发锁、Redis 重启恢复与信号验收待验证；Compose 接线、MySQL 对账补投、Worker 消费与租约、结果持久化及 ACK、重试死信和 Runner 尚未实现，完整 2D 继续进行中。
+
 ## 2026-11-09 — 计划落地
 
 - 已阅读需求基线 plan.md，建立 docs/IMPLEMENTATION_PLAN.md。

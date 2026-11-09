@@ -1,6 +1,6 @@
 # 数据库说明
 
-迁移 1 为身份与认证，迁移 2 为题目与不可变版本，迁移 3 为提交与任务基础；当前期望版本为 3。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收尚未运行，见 CHANGELOG.md；运行代码的最新期望版本以 migrations.ExpectedVersion 为准。
+迁移 1 为身份与认证，迁移 2 为题目与不可变版本，迁移 3 为提交与任务基础，迁移 4 为执行重试与死信，迁移 5 为消息隔离；当前期望版本为 5。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收结果见 CHANGELOG.md；运行代码的最新期望版本以 migrations.ExpectedVersion 为准。
 
 ## 数据关系
 
@@ -69,11 +69,29 @@ problems 的版本指针使用同题复合外键，不能引用其他题目的�
 | submissions | 账号、固定题面/数据版本、Run/Submit、源码/自测输入、当前轮次与结果摘要；64 KiB 正文使用 MEDIUMTEXT/BLOB |
 | judge_tasks | 每提交每 generation 唯一任务，attempt 1～4、状态与租约字段 |
 | judge_task_outbox | 每 task/attempt 唯一派发意图，事务提交后由 2D 派发至 Redis |
-| submission_results | 每提交每 generation 不可变结果，供后续 Worker 保存 |
+| submission_results | 每提交每 generation 不可变结果，由 Worker 与当前摘要/逐点结果同事务保存 |
 | submission_case_results | 每轮逐点状态、分数与资源统计，不保存隐藏输入答案 |
 
-创建事务依次锁准入行、检查活动任务数、复查账号当前状态，再以 FOR SHARE 固定已发布公开题目的版本，写入 submission/task/outbox/audit 后提交。Run 只使用样例或自己的输入，不参与成绩；正式提交要求存在数据版本。比赛字段本批约束为 NULL，比赛模块接入时须向前迁移。结果与租约字段为 2D 基础，当前不生成执行结果。
+创建事务依次锁准入行、检查活动任务数、复查账号当前状态，再以 FOR SHARE 固定已发布公开题目的版本，写入 submission/task/outbox/audit 后提交。Run 只使用样例或自己的输入，不参与成绩；正式提交要求存在数据版本。比赛字段本批约束为 NULL，比赛模块接入时须向前迁移。2D Worker 使用 generation/attempt/token/有效期 CAS 保存执行状态及结果，结果提交后才 ACK。
 
-## 待真实环境验证
+## 重试与死信（迁移 4）
 
-空库迁移、重复迁移、外键和 CHECK 生效、并发账号/学号唯一约束、事务锁行为、dirty 恢复流程及数据备份恢复，均需在真实 MySQL 8 上验收。sqlmock 仅验证应用事务行为，不能证明上述数据库特性已通过。
+| 表/变更 | 用途与约束 |
+| --- | --- |
+| judge_task_outbox.available_at | 数据库时间控制重试退避；默认当前时间保持初次提交即时可派发；新增 (dispatched_at,available_at,id) 索引 |
+| judge_attempt_failures | (task_id,attempt) 唯一失败决策；同题任务身份复合外键；attempt 1～3 只能 retry，4 只能 dead；原因仅允许五种基础设施故障码 |
+| judge_dead_letters | 每 task 唯一持久化死信，同时为派发 Outbox；复合外键引用失败记录、CHECK 限定 attempt=4 与受控原因码；派发时间和 Stream ID 成对保存 |
+
+基础设施失败事务先锁 submission、task 并验证有效租约；前 3 次增加 attempt、复位 task/submission、插入下一次 Outbox 与失败记录。第 4 次原子保存 SystemError 终态、零分结果历史、失败记录和死信意图。重试和死信都清理旧租约，不删除旧 attempt 的失败历史，ACK 只能在查询到相应持久化决策或结果后执行。
+
+迁移 4 使用 ALTER TABLE 及新表创建；升级需备份数据库与数据卷，运行 `ojctl migrate up`。MySQL DDL 仍可能部分成功并留下 dirty 状态，应用不会自动 Force。嵌入迁移链测试检查所有 up/down 文件与 ExpectedVersion 一致，不能代替真实 MySQL 迁移及 CHECK/外键验收。
+
+## 消息隔离（迁移 5）与人工重试
+
+judge_message_quarantine 使用 (stream_id,payload_digest) 主键，仅保存 SHA-256 消息摘要、受控原因 invalid_envelope/unresolvable_envelope 和时间，不保存原始源码或输入输出。隔离写入成功后才 ACK；当前活跃任务不能通过无法解析路径被隔离。
+
+`ojctl judge retry` 在准入锁、活跃超级管理员身份检查、submission→task 锁与预期 generation 校验下，新增下一 generation 的任务和 Outbox，复位提交摘要，并同事务记录 judge.retry 审计。旧 generation 结果、失败和死信均保留；提交失败或重放旧 generation 不会生成第二轮任务。Runner 自身的执行 journal 位于 runner-data 文件卷，必须与数据库/题目数据一起纳入运维备份，不能只恢复其中一项而忽略在途任务。
+
+## 真实验证与剩余范围
+
+2D 已在真实 MySQL 8.0.46 验证空库/重复迁移、历史外键、attempt CHECK、Outbox 唯一约束及任务/结果事务，版本 5、dirty=false，具体记录见 CHANGELOG.md。并发身份唯一性压力、真实 dirty DDL 修复、生产数据备份恢复仍需专门验收。sqlmock 本身不能证明真实数据库约束生效。

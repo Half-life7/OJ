@@ -31,6 +31,66 @@ x-app-environment: &app-environment
   JUDGE_QUEUE_CAPACITY: ${JUDGE_QUEUE_CAPACITY:-1000}
 
 services:
+  lang-cpp17:
+    image: biue-lang-cpp17:0.1.0
+    build:
+      context: ..
+      dockerfile: deploy/languages/Dockerfile
+      args:
+        LANGUAGE_IMAGE: gcc:14.2.0-bookworm
+        LANGUAGE_ID: cpp17
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  lang-go:
+    image: biue-lang-go:0.1.0
+    build:
+      context: ..
+      dockerfile: deploy/languages/Dockerfile
+      args:
+        LANGUAGE_IMAGE: golang:1.25.4-bookworm
+        LANGUAGE_ID: go
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  lang-python3:
+    image: biue-lang-python3:0.1.0
+    build:
+      context: ..
+      dockerfile: deploy/languages/Dockerfile
+      args:
+        LANGUAGE_IMAGE: python:3.12.10-slim-bookworm
+        LANGUAGE_ID: python3
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  lang-java:
+    image: biue-lang-java:0.1.0
+    build:
+      context: ..
+      dockerfile: deploy/languages/Dockerfile
+      args:
+        LANGUAGE_IMAGE: eclipse-temurin:21.0.7_6-jdk-jammy
+        LANGUAGE_ID: java
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   mysql:
     image: mysql:8.0.46
     restart: unless-stopped
@@ -121,6 +181,106 @@ services:
       retries: 10
       start_period: 10s
 
+  dispatcher:
+    <<: *app-image
+    restart: unless-stopped
+    environment:
+      <<: *app-environment
+      DISPATCHER_HEALTH_ADDR: "0.0.0.0:8082"
+    entrypoint: ["/app/dispatcher"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/dispatcher", "--healthcheck"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+
+  worker:
+    <<: *app-image
+    restart: unless-stopped
+    environment:
+      <<: *app-environment
+      RUNNER_URL: ${RUNNER_URL:-http://runner:8083}
+      RUNNER_TOKEN: ${RUNNER_TOKEN:?请独立生成 RUNNER_TOKEN}
+      RUNNER_CA_FILE: ${RUNNER_CA_FILE:-}
+      WORKER_HEALTH_ADDR: "0.0.0.0:8081"
+    entrypoint: ["/app/worker"]
+    read_only: true
+    volumes:
+      - problem-data:/app/oj-data/problem-data:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend, judge]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/worker", "--healthcheck"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+    stop_grace_period: 30s
+
+  runner:
+    <<: *app-image
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      RUNNER_TOKEN: ${RUNNER_TOKEN:?请独立生成 RUNNER_TOKEN}
+      RUNNER_ADDR: "0.0.0.0:8083"
+      RUNNER_DATA_DIR: /app/oj-data/runner
+      DOCKER_SOCKET: /var/run/docker.sock
+      JUDGE_CONCURRENCY: ${JUDGE_CONCURRENCY:-2}
+      RUNNER_TLS_CERT: ${RUNNER_TLS_CERT:-}
+      RUNNER_TLS_KEY: ${RUNNER_TLS_KEY:-}
+      RUNNER_CA_FILE: ${RUNNER_CA_FILE:-}
+    entrypoint: ["/app/judge-runner"]
+    group_add:
+      - "${DOCKER_GID:-0}"
+    read_only: true
+    volumes:
+      - runner-data:/app/oj-data/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [judge]
+    depends_on:
+      lang-cpp17:
+        condition: service_completed_successfully
+      lang-go:
+        condition: service_completed_successfully
+      lang-python3:
+        condition: service_completed_successfully
+      lang-java:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/judge-runner", "--healthcheck"]
+      interval: 15s
+      timeout: 6s
+      retries: 20
+      start_period: 20s
+    stop_grace_period: 30s
+
   nginx:
     image: biue-nginx:0.1.0
     build:
@@ -144,6 +304,8 @@ services:
         condition: service_healthy
 
 networks:
+  judge:
+    internal: true
   backend:
     internal: true
   edge:
@@ -155,3 +317,4 @@ volumes:
   mysql-data:
   redis-data:
   problem-data:
+  runner-data:

@@ -1,0 +1,16 @@
+# Optional production overlay. Put ca.pem, server.pem and server.key in
+# deploy/runner-tls; the server certificate SAN must include runner and 127.0.0.1.
+services:
+  runner:
+    environment:
+      RUNNER_TLS_CERT: /run/runner-tls/server.pem
+      RUNNER_TLS_KEY: /run/runner-tls/server.key
+      RUNNER_CA_FILE: /run/runner-tls/ca.pem
+    volumes:
+      - ./runner-tls:/run/runner-tls:ro
+  worker:
+    environment:
+      RUNNER_URL: https://runner:8083
+      RUNNER_CA_FILE: /run/runner-tls/ca.pem
+    volumes:
+      - ./runner-tls/ca.pem:/run/runner-tls/ca.pem:ro

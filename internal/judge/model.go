@@ -107,7 +107,7 @@ var languageRegistry = [...]Language{
 	{
 		ID: "java", Name: "Java", Filename: "Main.java", EditorMode: "java",
 		Compile: []string{"javac", "-encoding", "UTF-8", "Main.java"},
-		Execute: []string{"java", "Main"},
+		Execute: []string{"java", "-XX:+UseSerialGC", "-XX:ActiveProcessorCount=1", "-XX:MaxRAMPercentage=60", "-Xss512k", "Main"},
 	},
 }
 

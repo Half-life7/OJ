@@ -1,8 +1,10 @@
 # Biue OJ
 
+最新进度：**2D 已完成并通过真实 MySQL/Redis/Linux Docker 验收**，包含常驻 Worker、独立四语言 Runner、持久化防重/租约、结果后 ACK、重试/死信、Redis 对账恢复、消息隔离及人工重试。新构建要求迁移至版本 5；部署、边界与验收命令见 [2D Runner 说明](docs/RUNNER.md)，实际记录见 CHANGELOG.md。
+
 面向编程练习与校内竞赛的在线评测系统，采用 Go 模块化单体架构。现已实现工程基础、账号认证、题库、不可变数据版本与提交任务基础，完整需求见 [plan.md](plan.md)，分批计划见 [实施计划](docs/IMPLEMENTATION_PLAN.md)，实际改动与验证记录见 [修订日志](CHANGELOG.md)。
 
-Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。1C、2B 和 2C 已完成本地验证，下一批接入 Worker 与独立 Runner；真实 MySQL/Redis、容器和部署验收仍待完成。
+Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。四语言镜像已实际构建，amd64 全链路及故障恢复通过；arm64 已交叉编译并通过仿真启动，原生 arm64/生产整机验收留在后续部署批次。
 
 ## 当前功能
 
@@ -13,9 +15,10 @@ Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由�
 - 开发用 Docker Compose：MySQL、Redis、一次性迁移、Web、Nginx；数据库端口不映射宿主机，业务容器无 Docker Socket。
 - 公开题库与题面，超级管理员创建、编辑、下架、标签/难度/可见性管理，修订号防止并发覆盖。
 - ZIP32 安全校验与有界上传、不可变题面/数据版本、分值与摘要、版本元数据历史，以及专用持久卷；隐藏输入输出不通过 HTTP 暴露。
-- Run/Submit 分离、版本固定、独立限流与队列容量控制；提交、任务、Outbox 同事务保存。CodeMirror 6 本地四语言编辑器、本人提交记录和状态轮询已接入，当前新任务保持 Pending，执行链路在 2D 实现。
+- Run/Submit 分离、版本固定、独立限流与队列容量控制；提交、任务、Outbox 同事务保存。CodeMirror 6 本地四语言编辑器、本人提交记录和状态轮询已接入。Worker 在依赖就绪后领取 Pending 任务并调用认证 Runner，真实结果同事务保存后才确认消息。
+- 四语言编译/执行、每点独立沙箱、禁网/只读根目录/CPU/内存/PID/时间/输出限制、执行重试与死信、消息隔离、Redis 数据丢失后的 Outbox 对账及经管理员授权的死信 CLI。
 
-四语言判题、比赛、三种计分、题单、讨论、题解和三个全局榜仍在后续批次。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
+比赛、三种计分、题单、讨论、题解和三个全局榜仍在后续批次。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
 
 ## 开发环境
 
@@ -156,7 +159,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 | `/admin/problems` | 超级管理员题目管理与 ZIP 上传 |
 | `/submissions`、`/submissions/{id}` | 本人提交记录与详情；接口和限制见 [提交说明](docs/SUBMISSIONS.md) |
 
-依赖故障时健康接口仍可查询，相关业务返回 503；未实现的 Worker 和 Runner 不列为健康组件。
+依赖故障时健康接口仍可查询，相关业务返回 503；Worker、dispatcher 与 Runner 具有各自的进程/依赖健康检查，Web `/ready` 只报告自身数据库/Redis/迁移就绪，不代表整个判题集群就绪。
 
 ## 验证与当前限制
 
@@ -176,6 +179,6 @@ node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs
 
 首次开发遇到的 Go 依赖下载问题已通过正常授权的 HTTPS GET 路径解决，模块包与官方校验记录已锁定。首批全量单元测试、静态检查、构建及竞态检查已通过，也已验证真实 Web 进程在数据库和 Redis 不可用时仍可提供页面、CSRF 与健康检查。具体结果以 [CHANGELOG.md](CHANGELOG.md) 为准。
 
-本机 Docker 引擎仍不可连接；真实数据库迁移、容器构建启动、浏览器联调、Linux/amd64 完整部署和 arm64 启动仍须另行验证。交叉编译不能替代对应平台运行验收。
+本机 Docker Desktop 已启动；真实 MySQL/Redis、四语言镜像构建、Linux/amd64 判题及故障恢复通过，arm64 静态程序的仿真启动也已通过。完整生产部署、原生 arm64 整机与长期压力/备份恢复另列后续；交叉编译或仿真启动不能替代原生平台完整验收。
 
 后续开发按实施计划推进，每批同步修订日志，保留原始需求及历史数据。

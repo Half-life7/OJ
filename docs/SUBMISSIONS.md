@@ -1,6 +1,8 @@
 # 提交与任务基础（2C）
 
-2C 已实现提交记录、版本固定、事务 Outbox、提交页面与本地编辑器，并通过本地验证。随后 2D 接入 Redis 派发、Worker 和独立 Docker Runner；当前新记录保持 Pending，不生成模拟判题结果。真实 MySQL 迁移、浏览器及容器验收仍待完成。
+后续进度：2D 已接入常驻 Worker、独立四语言 Docker Runner、结果持久化/ACK、重试/死信、消息隔离、Redis 对账和人工重试 CLI。部署和实际验收见 [Runner 说明](RUNNER.md)。下文保留提交创建与读取约定。
+
+新记录先保存为 Pending，随后由就绪的 Worker/Runner 处理。依赖或 Runner 未就绪时保留任务，程序结果来自 Docker 沙箱，最终验收状态以实际运行记录为准。普通模拟测试不代替真实 MySQL/Redis、浏览器或容器验收。
 
 ## 创建与读取
 
@@ -36,4 +38,4 @@
 | 503 / 50302 | 待处理任务达到队列上限 |
 | 503 / 50301 | 数据库、Redis 或其他业务依赖不可用 |
 
-升级前备份数据库与题目数据卷，运行 `ojctl migrate up` 至版本 3，再启动 Web。CodeMirror 6 四语言资源已打包到本地静态文件，重建方法与第三方许可证见 tools/editor；Go/Docker 正常构建无需安装 Node。编辑器动态样式使用每请求 nonce，缺少 nonce 或初始化失败时保留 textarea。页面轮询采用退避，终态及离开页面后停止。
+升级前备份数据库、problem-data 和 runner-data，运行 `ojctl migrate up` 至版本 5；迁移 4 增加重试/死信，迁移 5 增加消息隔离，真实迁移验收单独记录。CodeMirror 6 四语言资源已打包到本地静态文件，重建方法与第三方许可证见 tools/editor；Go/Docker 正常构建无需安装 Node。编辑器动态样式使用每请求 nonce，缺少 nonce 或初始化失败时保留 textarea。页面轮询采用退避，终态及离开页面后停止。

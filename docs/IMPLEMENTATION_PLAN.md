@@ -1,5 +1,7 @@
 # OJ 实施计划
 
+最新进度：**2D 已完成**，含 Outbox、常驻 Worker、固定版本请求、租约/心跳、独立四语言 Docker Runner、结果持久化/ACK、重试/死信、Redis 对账、消息隔离与人工重试 CLI。迁移版本为 5；真实 MySQL/Redis、Linux/amd64 沙箱及故障矩阵已通过，见 [Runner 部署与验收](RUNNER.md) 和 CHANGELOG.md。arm64 交叉编译及仿真启动通过，原生整机验收单列后续。
+
 需求基线：根目录 `plan.md`。不修改或删减原始需求。开始日期：2026-11-09。
 
 ## 已确认的决定
@@ -9,7 +11,7 @@
 - 暂缓真实 MySQL/Redis、Docker 判题和 Linux 部署验收；模拟测试不能代替真实环境验收。
 - 使用 Go、Gin、sqlx、MySQL 8、go-redis v9、slog、Go Template 和原生 JavaScript。HTTP 服务底层基于 Go net/http，API 路由、中间件、参数绑定统一使用 Gin。
 
-当前 HTTP 层使用 Gin v1.12.0，1C、2B 和 2C 提交与任务基础已完成本地验证。下一批为 2D Redis 派发、Worker 与独立 Runner；真实服务与部署验收仍待完成。此前各批次历史验证记录保留。
+当前 HTTP 层使用 Gin v1.12.0，1C、2B、2C 及 2D 的代码与相关验证已推进完成。下一批进入批次 3；此前各批次历史验证记录保留，不用后来的通过结果覆盖当时的待验证状态。
 
 ## 批次路线
 
@@ -18,7 +20,7 @@
 | 1A | 工程结构、环境配置、日志、数据库/Redis 接入、版本迁移、健康检查、开发 Compose | 本地验证通过，真实服务/容器待验 |
 | 1B | 永久账号注册/登录/退出/改密、身份与会话、管理员初始化、基础页面 | 本地验证通过，真实数据库/浏览器联调待验 |
 | 1C | Gin HTTP 层迁移：路由、中间件、参数绑定与兼容性回归 | 本地验证通过，真实服务/容器待验 |
-| 2 | 题目与不可变数据版本、ZIP 安全导入、Run/Submit、Outbox、Worker、独立 Runner、C++17/Go/Python3/Java 沙箱 | 2A/2B/2C 本地验证通过，2D Worker/Runner 待实现 |
+| 2 | 题目与不可变数据版本、ZIP 安全导入、Run/Submit、Outbox、Worker、独立 Runner、C++17/Go/Python3/Java 沙箱 | 已完成；真实 MySQL/Redis/Linux amd64 判题及故障恢复通过，原生 arm64/生产部署另列后续 |
 | 3 | 学号审核与纠错、身份管理、比赛与队伍、报名、正式/打星/退赛、独立 OI/ACM/IOI 引擎、快照与幂等结算 | 待开始 |
 | 4 | 日常练习、题单、讨论、题解、日常解题/比赛积分/题解发布三个全局榜 | 待开始 |
 | 5 | CSV、封榜、完整管理后台、监控、安装升级、备份恢复、Linux 部署及运维文档 | 待开始 |

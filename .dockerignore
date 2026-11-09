@@ -11,3 +11,6 @@ tmp
 oj-data
 *.exe
 coverage.out
+deploy/runner-tls
+**/__pycache__
+**/*.pyc

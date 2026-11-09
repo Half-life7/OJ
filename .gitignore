@@ -10,3 +10,6 @@
 /tmp/
 /.cache/
 *.exe
+/deploy/runner-tls/
+__pycache__/
+*.pyc

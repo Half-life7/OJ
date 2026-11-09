@@ -1,8 +1,8 @@
 # 账号、题库与提交 API 说明
 
-本文件描述 1B 已编写的接口。真实 MySQL/Redis 和容器验收尚未运行；具体检查结果见 CHANGELOG.md。
+本文件描述认证及相关公开 API；2D 已通过真实 MySQL/Redis、四语言 Docker 和故障恢复验收。具体检查范围与结果见 CHANGELOG.md，不把该结果扩展为生产容量或全部浏览器流程验收。
 
-2C Run/Submit 创建、本人记录、语言列表、状态与错误码见 [提交说明](SUBMISSIONS.md)。提交 JSON 上限 256 KiB，源码与 Run 输入各 64 KiB；GET /api/languages 与 CSRF 获取一样不依赖数据库就绪。当前任务保存为 Pending，Worker/Runner 在 2D 实现。
+Run/Submit 创建、本人记录、语言列表、状态与错误码见 [提交说明](SUBMISSIONS.md)。提交 JSON 上限 256 KiB，源码与 Run 输入各 64 KiB；GET /api/languages 与 CSRF 获取一样不依赖数据库就绪。新任务保存为 Pending，由 2D Worker 与独立 Docker Runner 处理；内部认证协议见 [Runner 说明](RUNNER.md)。
 
 2B 题目列表、题面、管理和 ZIP 导入接口见 [题目管理说明](PROBLEMS.md)。题目 JSON 写请求上限 256 KiB，ZIP 导入整个请求上限 34 MiB；认证仍为 16 KiB。题库另使用 403/40302 表示管理权限不足、413/41301 表示上传超限。所有管理写请求必须通过 CSRF header 校验，服务在鉴权前不解析 multipart 正文。
 
@@ -85,4 +85,4 @@ Redis Lua 脚本原子更新来源 IP 和规范化账号的计数，键使用 SH
 ## 健康检查
 
 - GET /health：进程可响应时返回 200，不承诺依赖或判题可用。
-- GET /ready：检查 MySQL、Redis、迁移版本及 dirty 标记，全部满足返回 200，否则 503；不报告尚未实现的 Worker/Runner 为健康。
+- GET /ready：检查 Web 的 MySQL、Redis、迁移版本及 dirty 标记，全部满足返回 200，否则 503；Worker、dispatcher 和 Runner 使用各自的探针，不把 Web 就绪误作整个判题集群已就绪。
