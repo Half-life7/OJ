@@ -38,11 +38,17 @@
 | linux/amd64、linux/arm64 全部 cmd 入口交叉编译 | 通过 |
 | arm64 启动 | 交叉编译 web 在仿真容器启动，/health=200、/ready=200；非原生 arm64 整机验收 |
 
-HTTP 验收元数据保存在 `.cache/2d-smoke-basic.json`、`.cache/2d-smoke-recovery.json`、`.cache/2d-smoke-verdicts.json`，均不含凭据。恢复样本包括固定版本提交 14、Worker 崩溃 17、Runner 崩溃 18、死信/人工重判 19（两代历史）、Redis 丢失恢复 20；最新终态 HTTP 样本 26～31。初次定位问题产生的失败测试历史按保留规则未删除。
+HTTP 验收元数据保存在 `.cache/2d-smoke-basic.json`、`.cache/2d-smoke-recovery.json`、`.cache/2d-smoke-verdicts.json`，均不含凭据。恢复样本包括固定版本、Worker/Runner 崩溃、死信/人工重判和 Redis 丢失恢复；终态 HTTP 样本覆盖四语言、CE/WA/RE/TLE/MLE 及 Run 输出限制。初次定位问题产生的失败测试历史按保留规则未删除。
 
 验收脚本为 tools/verify_2d.py（可选状态/故障矩阵）、tools/verify_2d_recovery.py、tools/verify_2d_verdicts.py，配置检查为 tools/check_2d_compose.py，真实沙箱用例在 internal/judge_runner/docker_integration_test.go。文档已同步至 README、API、数据库、实施计划及 RUNNER/WORKER/DISPATCH 说明。
 
-剩余范围：批次 3 的身份审核/比赛/计分；完整管理网页、生产容量与长期压力、生产安装升级/备份恢复、原生 arm64 完整部署仍属后续批次。本次没有部署生产公网服务、提交 Git 或发布版本。
+剩余范围：批次 3 的身份审核/比赛/计分；完整管理网页、生产容量与长期压力、生产安装升级/备份恢复、原生 arm64 完整部署仍属后续批次。本次没有部署生产公网服务。
+
+## 2026-11-10 — GitHub 同步与验收环境收尾
+
+- 2D 实现提交 `c4e0dae`（`feat: complete 2D judging pipeline`）已推送至 `origin/main`；本次文档收尾随后会作为单独提交同步。
+- 独立验收项目 `biue-2d-20261110004742` 完成检查后关闭；MySQL、Redis、problem-data 和 runner-data 数据卷保留。
+- 随机验收凭据只在 Git 忽略的 `.cache/2d-acceptance.env`，没有进入提交或构建上下文。
 
 ## 2026-11-09 — 2D 第四小批：执行重试与死信（已完成，本地验证）
 

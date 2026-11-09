@@ -114,4 +114,6 @@ BIUE_DOCKER_TEST=1 go test ./internal/judge_runner -run '^TestDockerIntegration$
 
 本次已验证空库/重复迁移、实际 CHECK/历史外键、固定版本/Run 输入、Worker/Runner SIGKILL 恢复、Redis 清空与补投、防重复结果、第四次失败死信及经审计的人工重判。生产容量、长期压力、灾备恢复及原生 arm64 运行验收属于后续部署批次，不以本次单机验收替代。
 
+独立验收项目 `biue-2d-20261110004742` 完成后已关闭，数据卷保留。忽略文件 `.cache/2d-acceptance.env` 仅供本机复用验收凭据，不提交 Git。
+
 协议与参数采用 [Docker Engine API](https://docs.docker.com/reference/api/engine/version/v1.46/) 的受控子集；服务没有 Docker API 透传端点。
