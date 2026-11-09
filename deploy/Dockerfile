@@ -11,7 +11,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=readonly -
 FROM alpine:3.22.2 AS runtime
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 10001 app \
-    && adduser -D -H -u 10001 -G app app
+    && adduser -D -H -u 10001 -G app app \
+    && mkdir -p /app/oj-data/problem-data \
+    && chown -R 10001:10001 /app/oj-data
 WORKDIR /app
 COPY --from=builder --chown=10001:10001 /out/web /out/ojctl /app/
 USER 10001:10001

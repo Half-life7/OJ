@@ -26,6 +26,9 @@ x-app-environment: &app-environment
   TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.30.0.10/32}
   AUTH_SESSION_TTL: ${AUTH_SESSION_TTL:-12h}
   BCRYPT_COST: ${BCRYPT_COST:-12}
+  PROBLEM_DATA_DIR: /app/oj-data/problem-data
+  PROBLEM_IMPORT_CONCURRENCY: ${PROBLEM_IMPORT_CONCURRENCY:-2}
+  JUDGE_QUEUE_CAPACITY: ${JUDGE_QUEUE_CAPACITY:-1000}
 
 services:
   mysql:
@@ -93,6 +96,8 @@ services:
     restart: unless-stopped
     environment: *app-environment
     read_only: true
+    volumes:
+      - problem-data:/app/oj-data/problem-data
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     security_opt:
@@ -149,3 +154,4 @@ networks:
 volumes:
   mysql-data:
   redis-data:
+  problem-data:

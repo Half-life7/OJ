@@ -1,6 +1,6 @@
-# 首批数据库说明
+# 数据库说明
 
-迁移文件：`migrations/000001_identity.up.sql`；期望版本 1。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收尚未运行，见 CHANGELOG.md。
+迁移 1 为身份与认证，迁移 2 为题目与不可变版本，迁移 3 为提交与任务基础；当前期望版本为 3。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收尚未运行，见 CHANGELOG.md；运行代码的最新期望版本以 migrations.ExpectedVersion 为准。
 
 ## 数据关系
 
@@ -46,6 +46,33 @@ erDiagram
 - `.down.sql` 仅用于开发环境手动回滚，具有破坏性。正常安装、升级和 Web 不执行 down；生产升级应先备份再执行向前迁移。
 - 业务连接禁止 multiStatements；仅独立迁移连接启用。程序通过驱动 DSN 编码器传递密码，不拼接 SQL 或输出连接串。
 - 首批不自动清理过期会话或历史，后续应使用按 expires_at 分批处理的受控维护命令；不得删除比赛、提交或必要审计历史。
+
+## 题目与版本（迁移 2）
+
+| 表 | 用途与约束 |
+| --- | --- |
+| problems | 当前题面 JSON、检索字段、revision、题面/数据版本指针、创建人与时间；status/visibility/difficulty 有 CHECK 约束 |
+| problem_versions | (problem_id,version) 主键，不可变题面快照与创建信息 |
+| problem_data_versions | (problem_id,data_version) 主键，唯一内部 storage_key、摘要、测试点数/分值/字节统计与导入后的 revision |
+| testcases | (problem_id,data_version,case_id) 主键，仅保存每点分值和输入输出长度，不保存正文 |
+| tags / problem_tags | 标签唯一名称及题目关联；支持按标签过滤 |
+
+problems 的版本指针使用同题复合外键，不能引用其他题目的版本。创建时在事务内插入空指针、首个快照并设置指针，正常提交后必须有题面版本；数据指针在首次导入前可空，API 表示为 0。编辑新增题面快照并递增 revision；导入在行锁内校验修订号，新增数据版本、测试点元数据、更新指针并写审计。旧版本不可更新或删除。
+
+文件先原子发布再事务登记，数据库提交未知时保留文件，避免误删实际已引用版本；MySQL 始终是可使用版本的事实来源。升级使用向前迁移，备份必须同时覆盖数据库与 problem-data 卷。具体 HTTP 与失败补偿见 [题目管理说明](PROBLEMS.md)。
+
+## 提交与任务（迁移 3）
+
+| 表 | 用途与约束 |
+| --- | --- |
+| judge_admission | 单行准入锁；串行检查活动任务数，防止并发超出队列容量 |
+| submissions | 账号、固定题面/数据版本、Run/Submit、源码/自测输入、当前轮次与结果摘要；64 KiB 正文使用 MEDIUMTEXT/BLOB |
+| judge_tasks | 每提交每 generation 唯一任务，attempt 1～4、状态与租约字段 |
+| judge_task_outbox | 每 task/attempt 唯一派发意图，事务提交后由 2D 派发至 Redis |
+| submission_results | 每提交每 generation 不可变结果，供后续 Worker 保存 |
+| submission_case_results | 每轮逐点状态、分数与资源统计，不保存隐藏输入答案 |
+
+创建事务依次锁准入行、检查活动任务数、复查账号当前状态，再以 FOR SHARE 固定已发布公开题目的版本，写入 submission/task/outbox/audit 后提交。Run 只使用样例或自己的输入，不参与成绩；正式提交要求存在数据版本。比赛字段本批约束为 NULL，比赛模块接入时须向前迁移。结果与租约字段为 2D 基础，当前不生成执行结果。
 
 ## 待真实环境验证
 

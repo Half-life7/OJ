@@ -38,6 +38,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo || cfg.SessionTTL != 12*time.Hour || cfg.BcryptCost != 12 || len(cfg.TrustedProxyCIDRs) != 0 {
 		t.Fatal("incorrect security defaults")
 	}
+	if cfg.ProblemDataDir != "oj-data/problem-data" || cfg.ProblemImportConcurrency != 2 || cfg.JudgeQueueCapacity != 1000 {
+		t.Fatal("incorrect problem storage defaults")
+	}
 }
 
 func TestOverridesAndCredentialsArePreserved(t *testing.T) {
@@ -84,6 +87,9 @@ func TestInvalidConfigurationDoesNotExposeValues(t *testing.T) {
 		{"TRUSTED_PROXY_CIDRS", "private-proxy-value"}, {"TRUSTED_PROXY_CIDRS", "127.0.0.1/32,"},
 		{"AUTH_SESSION_TTL", "0s"}, {"AUTH_SESSION_TTL", "59s"}, {"AUTH_SESSION_TTL", "-1h"}, {"AUTH_SESSION_TTL", "169h"}, {"AUTH_SESSION_TTL", "private-duration"},
 		{"BCRYPT_COST", "9"}, {"BCRYPT_COST", "15"},
+		{"PROBLEM_IMPORT_CONCURRENCY", "0"}, {"PROBLEM_IMPORT_CONCURRENCY", "9"}, {"PROBLEM_IMPORT_CONCURRENCY", "private-value"},
+		{"PROBLEM_DATA_DIR", "private-directory\x00suffix"}, {"PROBLEM_DATA_DIR", "private-directory\nvalue"},
+		{"JUDGE_QUEUE_CAPACITY", "0"}, {"JUDGE_QUEUE_CAPACITY", "100001"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.key+"/"+fmt.Sprint(len(tc.value)), func(t *testing.T) {

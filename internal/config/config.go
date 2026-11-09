@@ -17,25 +17,28 @@ import (
 // Config contains application configuration. Do not log individual secret fields.
 // Its formatting and slog representations intentionally omit credentials and keys.
 type Config struct {
-	Env               string
-	Port              int
-	MySQLHost         string
-	MySQLPort         int
-	MySQLDatabase     string
-	MySQLUser         string
-	MySQLPassword     string
-	RedisAddr         string
-	RedisPassword     string
-	RedisDB           int
-	JWTSecret         []byte
-	CSRFSecret        []byte
-	EncryptionKey     []byte
-	PublicURL         string
-	Timezone          string
-	LogLevel          slog.Level
-	TrustedProxyCIDRs []netip.Prefix
-	SessionTTL        time.Duration
-	BcryptCost        int
+	Env                      string
+	Port                     int
+	MySQLHost                string
+	MySQLPort                int
+	MySQLDatabase            string
+	MySQLUser                string
+	MySQLPassword            string
+	RedisAddr                string
+	RedisPassword            string
+	RedisDB                  int
+	JWTSecret                []byte
+	CSRFSecret               []byte
+	EncryptionKey            []byte
+	PublicURL                string
+	Timezone                 string
+	LogLevel                 slog.Level
+	TrustedProxyCIDRs        []netip.Prefix
+	SessionTTL               time.Duration
+	BcryptCost               int
+	ProblemDataDir           string
+	ProblemImportConcurrency int
+	JudgeQueueCapacity       int
 }
 
 // Load reads process environment variables and fails without exposing their values.
@@ -143,6 +146,16 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		return Config{}, invalid("AUTH_SESSION_TTL", "must be a duration between 1m and 168h")
 	}
 	if cfg.BcryptCost, err = integer("BCRYPT_COST", value("BCRYPT_COST", "12"), 10, 14); err != nil {
+		return Config{}, err
+	}
+	cfg.ProblemDataDir = value("PROBLEM_DATA_DIR", "oj-data/problem-data")
+	if strings.ContainsAny(cfg.ProblemDataDir, "\x00\r\n") {
+		return Config{}, invalid("PROBLEM_DATA_DIR", "contains invalid characters")
+	}
+	if cfg.ProblemImportConcurrency, err = integer("PROBLEM_IMPORT_CONCURRENCY", value("PROBLEM_IMPORT_CONCURRENCY", "2"), 1, 8); err != nil {
+		return Config{}, err
+	}
+	if cfg.JudgeQueueCapacity, err = integer("JUDGE_QUEUE_CAPACITY", value("JUDGE_QUEUE_CAPACITY", "1000"), 1, 100000); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil

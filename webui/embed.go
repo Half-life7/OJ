@@ -1,4 +1,4 @@
-// Package webui serves the embedded, server-rendered account pages.
+// Package webui serves the embedded, server-rendered account and problem pages.
 package webui
 
 import (
@@ -8,14 +8,18 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strconv"
+
+	"biue/internal/httpx"
 )
 
 //go:embed templates/*.html static/*
 var files embed.FS
 
 type page struct {
-	Name  string
-	Title string
+	Name       string
+	Title      string
+	StyleNonce string
 }
 
 // Handler returns the MPA pages and their local assets. API routes belong to
@@ -31,14 +35,28 @@ func Handler() (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	for path, p := range map[string]page{
-		"/{$}":      {"home", "首页"},
-		"/register": {"register", "创建账号"},
-		"/login":    {"login", "登录"},
-		"/me":       {"me", "个人中心"},
+		"/{$}":              {Name: "home", Title: "首页"},
+		"/register":         {Name: "register", Title: "创建账号"},
+		"/login":            {Name: "login", Title: "登录"},
+		"/me":               {Name: "me", Title: "个人中心"},
+		"/problems":         {Name: "problems", Title: "题库"},
+		"/problems/{id}":    {Name: "problem", Title: "题目详情"},
+		"/admin/problems":   {Name: "admin-problems", Title: "题目管理"},
+		"/submissions":      {Name: "submissions", Title: "我的提交"},
+		"/submissions/{id}": {Name: "submission", Title: "提交详情"},
 	} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+			if p.Name == "problem" || p.Name == "submission" {
+				id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+				if err != nil || id == 0 || strconv.FormatUint(id, 10) != r.PathValue("id") {
+					http.NotFound(w, r)
+					return
+				}
+			}
 			var output bytes.Buffer
-			if err := templates.ExecuteTemplate(&output, "page.html", p); err != nil {
+			requestPage := p
+			requestPage.StyleNonce = httpx.StyleNonce(r.Context())
+			if err := templates.ExecuteTemplate(&output, "page.html", requestPage); err != nil {
 				http.Error(w, "页面暂时无法加载", http.StatusInternalServerError)
 				return
 			}
@@ -51,7 +69,9 @@ func Handler() (http.Handler, error) {
 	}
 	assetServer := http.FileServer(http.FS(assets))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "app.css" && r.URL.Path != "app.js" && r.URL.Path != "/app.css" && r.URL.Path != "/app.js" {
+		switch r.URL.Path {
+		case "app.css", "app.js", "problems.js", "submissions.js", "editor.js", "/app.css", "/app.js", "/problems.js", "/submissions.js", "/editor.js":
+		default:
 			http.NotFound(w, r)
 			return
 		}

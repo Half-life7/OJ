@@ -15,9 +15,14 @@ import (
 
 	"biue/internal/auth"
 	"biue/internal/config"
+	"biue/internal/problem"
+	"biue/internal/problemdata"
 	"biue/internal/server"
 	"biue/internal/storage"
+	"biue/internal/submission"
 	"biue/webui"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -32,6 +37,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Application logging is configured below; disable Gin's debug route output.
+	gin.SetMode(gin.ReleaseMode)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 	db, err := storage.OpenMySQL(cfg)
@@ -48,13 +55,38 @@ func run() error {
 	if err != nil {
 		return errors.New("cannot initialize authentication")
 	}
+	datasets, err := problemdata.New(cfg.ProblemDataDir)
+	if err != nil {
+		return errors.New("cannot initialize problem data storage")
+	}
+	defer datasets.Close()
+	problems, err := problem.New(db, datasets, logger)
+	if err != nil {
+		return errors.New("cannot initialize problems")
+	}
+	problemHTTP, err := problem.NewHandler(problems, svc, cfg.ProblemImportConcurrency)
+	if err != nil {
+		return errors.New("cannot initialize problem HTTP handlers")
+	}
+	submissions, err := submission.New(db, submission.Config{QueueCapacity: cfg.JudgeQueueCapacity}, logger)
+	if err != nil {
+		return errors.New("cannot initialize submissions")
+	}
+	submissionHTTP, err := submission.NewHandler(submissions, svc, client)
+	if err != nil {
+		return errors.New("cannot initialize submission HTTP handlers")
+	}
 	ui, err := webui.Handler()
 	if err != nil {
 		return errors.New("cannot initialize templates")
 	}
 	handler := server.New(cfg, server.Dependencies{
-		Ready:       func(ctx context.Context) storage.Readiness { return storage.Check(ctx, db, client) },
-		RegisterAPI: svc.RegisterRoutes, UI: ui, Logger: logger,
+		Ready: func(ctx context.Context) storage.Readiness { return storage.Check(ctx, db, client) },
+		RegisterAPI: func(r *gin.RouterGroup) {
+			svc.RegisterRoutes(r)
+			problemHTTP.RegisterRoutes(r)
+			submissionHTTP.RegisterRoutes(r)
+		}, UI: ui, Logger: logger,
 	})
 	srv := &http.Server{
 		Addr: ":" + strconv.Itoa(cfg.Port), Handler: handler, ReadHeaderTimeout: 5 * time.Second,

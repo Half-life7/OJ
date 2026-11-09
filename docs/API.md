@@ -1,11 +1,17 @@
-# 首批 API 说明
+# 账号、题库与提交 API 说明
 
 本文件描述 1B 已编写的接口。真实 MySQL/Redis 和容器验收尚未运行；具体检查结果见 CHANGELOG.md。
+
+2C Run/Submit 创建、本人记录、语言列表、状态与错误码见 [提交说明](SUBMISSIONS.md)。提交 JSON 上限 256 KiB，源码与 Run 输入各 64 KiB；GET /api/languages 与 CSRF 获取一样不依赖数据库就绪。当前任务保存为 Pending，Worker/Runner 在 2D 实现。
+
+2B 题目列表、题面、管理和 ZIP 导入接口见 [题目管理说明](PROBLEMS.md)。题目 JSON 写请求上限 256 KiB，ZIP 导入整个请求上限 34 MiB；认证仍为 16 KiB。题库另使用 403/40302 表示管理权限不足、413/41301 表示上传超限。所有管理写请求必须通过 CSRF header 校验，服务在鉴权前不解析 multipart 正文。
+
+HTTP 层已迁至 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。实施计划 1C 的本地回归已通过，本文的接口路径、请求字段、响应结构、错误码、Cookie、CSRF、来源校验与限流约定保持兼容；真实服务及容器验收仍待完成。
 
 ## 通用约定
 
 - JSON 返回结构固定为 `{ "code": 0, "message": "success", "data": {} }`。错误的 data 为 null。
-- 有请求体的写请求使用 `Content-Type: application/json`，请求体上限 16 KiB，拒绝未知字段、多份 JSON 和错误类型。退出接口也允许完全不发送请求体。
+- 以下认证写接口使用 `Content-Type: application/json`，请求体上限 16 KiB，拒绝未知字段、多份 JSON 和错误类型。退出接口也允许完全不发送请求体。
 - 所有接口响应使用 `Cache-Control: no-store`；账号 Cookie 和密码哈希不在 JSON 中返回。
 - 写接口需要 CSRF Cookie 及 `X-CSRF-Token`；浏览器通过同源 Fetch 携带 Cookie。先请求 GET /api/auth/csrf 获取 token。
 - 写请求的 Origin 如存在，必须匹配 PUBLIC_URL；HTTPS 下 gorilla/csrf 同时执行对应的来源检查。

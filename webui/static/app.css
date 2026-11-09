@@ -897,3 +897,448 @@ fieldset {
     padding:22px 18px;
   }
 }
+
+/* Problem library and management pages. */
+select,textarea {
+  font:inherit;
+  color:var(--ink);
+}
+
+form select,form textarea {
+  width:100%;
+  min-width:0;
+  padding:9px 12px;
+  border:1px solid #d7e1dc;
+  border-radius:5px;
+  background:#fcfdfc;
+  font-size:14px;
+}
+
+form select {
+  min-height:43px;
+}
+
+form textarea {
+  display:block;
+  line-height:1.7;
+  resize:vertical;
+}
+
+textarea:focus-visible,select:focus-visible {
+  outline:none;
+  border-color:var(--green);
+  box-shadow:0 0 0 3px #14695a17;
+}
+
+.problem-filters {
+  display:grid;
+  grid-template-columns:2fr 1fr 1fr auto;
+  gap:14px;
+  align-items:end;
+  margin:0 0 28px;
+}
+
+.problem-filters label {
+  margin-top:0;
+}
+
+.problem-filters .button {
+  min-height:43px;
+}
+
+.problem-list {
+  display:grid;
+  gap:12px;
+}
+
+.problem-card {
+  padding:22px 24px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--white);
+}
+
+.problem-card-heading {
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.problem-card-heading h2 {
+  min-width:0;
+  flex:1;
+  margin:0;
+  font-size:18px;
+  font-weight:600;
+  overflow-wrap:anywhere;
+}
+
+.problem-card-heading h2 a {
+  color:var(--ink);
+}
+
+.problem-number {
+  font-size:12px;
+  color:var(--muted);
+}
+
+.problem-badges {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+
+.problem-card .problem-badges:not(:empty) {
+  margin-top:14px;
+}
+
+.problem-badge {
+  display:inline-block;
+  padding:3px 9px;
+  border-radius:4px;
+  background:#eef3f0;
+  color:var(--body);
+  font-size:11px;
+  line-height:1.6;
+  overflow-wrap:anywhere;
+}
+
+.difficulty-easy {
+  color:#17634e;
+  background:#e7f4ec;
+}
+
+.difficulty-medium {
+  color:#826019;
+  background:#faf1d9;
+}
+
+.difficulty-hard {
+  color:#9b352d;
+  background:#fbe9e5;
+}
+
+.problem-pagination {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin:24px 0 44px;
+}
+
+.problem-pagination p {
+  margin:0;
+  color:var(--muted);
+  font-size:12px;
+  text-align:center;
+}
+
+.problem-pagination .button {
+  min-height:38px;
+  padding:7px 14px;
+  font-size:12px;
+}
+
+.problem-empty {
+  padding:30px 24px;
+  color:var(--muted);
+  background:var(--white);
+  border:1px dashed var(--line);
+  border-radius:7px;
+  font-size:13px;
+  text-align:center;
+}
+
+.problem-sheet {
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--white);
+  padding:32px;
+  margin-bottom:52px;
+}
+
+.problem-sheet #problem-tags:not(:empty) {
+  margin-top:12px;
+}
+
+.problem-sheet section {
+  margin-top:32px;
+}
+
+.problem-sheet h2 {
+  margin:0 0 14px;
+  font-size:19px;
+  font-weight:600;
+}
+
+.problem-prose {
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  margin:0;
+  font:inherit;
+  color:var(--body);
+  line-height:1.95;
+}
+
+.problem-samples,.problem-field-pair {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:18px;
+}
+
+.sample-code {
+  min-height:56px;
+  margin:0;
+  padding:16px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  border:1px solid var(--line);
+  border-radius:5px;
+  background:var(--paper);
+  font:13px/1.8 Consolas,"SFMono-Regular",monospace;
+}
+
+.admin-problem-browser {
+  margin-bottom:40px;
+}
+
+.problem-panel-heading {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  align-items:center;
+  gap:16px;
+  margin-bottom:20px;
+}
+
+.problem-panel-heading h2 {
+  margin:0;
+  font-size:21px;
+  font-weight:600;
+}
+
+.problem-admin-grid {
+  display:grid;
+  grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);
+  gap:24px;
+  margin-bottom:52px;
+  align-items:start;
+}
+
+.problem-editor,.problem-data-panel {
+  min-width:0;
+}
+
+.problem-data-panel {
+  display:grid;
+  gap:24px;
+}
+
+.problem-select,.text-button {
+  padding:0;
+  border:0;
+  background:none;
+  color:var(--green);
+  text-align:left;
+}
+
+.problem-select {
+  font:inherit;
+}
+
+.problem-select:hover,.text-button:hover {
+  text-decoration:underline;
+}
+
+.text-button {
+  font-size:12px;
+}
+
+.problem-version-item {
+  padding:16px 0;
+  border-bottom:1px solid var(--line);
+}
+
+.problem-version-item h3,#problem-version-detail h3 {
+  margin:0 0 6px;
+  font-size:14px;
+  font-weight:600;
+}
+
+.problem-version-item p {
+  margin:4px 0;
+  font-size:11px;
+  color:var(--muted);
+}
+
+.problem-data-panel .problem-pagination {
+  margin-bottom:0;
+}
+
+#problem-version-detail {
+  margin-top:24px;
+  overflow-x:auto;
+}
+
+.problem-digest {
+  font:10px/1.8 Consolas,monospace;
+  overflow-wrap:anywhere;
+  color:var(--muted);
+}
+
+.problem-case-table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:11px;
+}
+
+.problem-case-table th,.problem-case-table td {
+  padding:8px 5px;
+  border-bottom:1px solid var(--line);
+  text-align:right;
+  overflow-wrap:anywhere;
+}
+
+.problem-case-table th:first-child,.problem-case-table td:first-child {
+  text-align:left;
+}
+
+@media(max-width:900px) {
+  .problem-filters {
+    grid-template-columns:1fr 1fr;
+  }
+  .problem-admin-grid {
+    grid-template-columns:minmax(0,1fr);
+  }
+  .problem-data-panel {
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    align-items:start;
+  }
+}
+
+@media(max-width:680px) {
+  .problem-filters {
+    gap:12px;
+  }
+  .problem-filters>div:first-child {
+    grid-column:1/-1;
+  }
+  .problem-filters .button {
+    grid-column:1/-1;
+  }
+  .problem-card {
+    padding:18px;
+  }
+  .problem-card-heading {
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  .problem-card-heading h2 {
+    font-size:16px;
+  }
+  .problem-sheet {
+    padding:22px;
+  }
+  .problem-samples,.problem-data-panel {
+    grid-template-columns:minmax(0,1fr);
+  }
+  .problem-admin-grid {
+    gap:18px;
+  }
+  .problem-panel-heading .button {
+    min-height:36px;
+    padding:7px 12px;
+    font-size:12px;
+  }
+}
+
+@media(max-width:360px) {
+  .problem-field-pair {
+    grid-template-columns:minmax(0,1fr);
+    gap:0;
+  }
+}
+
+/* Code editor and personal submission pages. */
+.submission-composer {
+  margin-bottom:52px;
+}
+
+.source-code,.code-editor .cm-scroller {
+  font:13px/1.7 Consolas,"SFMono-Regular",monospace;
+}
+
+.code-editor {
+  overflow:hidden;
+  border:1px solid #d7e1dc;
+  border-radius:5px;
+  background:#fcfdfc;
+}
+
+.code-editor:focus-within {
+  border-color:var(--green);
+  box-shadow:0 0 0 3px #14695a17;
+}
+
+.code-editor .cm-editor {
+  min-height:300px;
+}
+
+.code-editor .cm-scroller {
+  max-height:600px;
+  overflow:auto;
+}
+
+.checkbox-label {
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.checkbox-label input {
+  width:16px;
+  height:16px;
+  flex:0 0 auto;
+  margin:0;
+}
+
+.submission-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-top:24px;
+}
+
+.submission-inline-result {
+  margin-top:28px;
+  border-top:1px solid var(--line);
+  padding-top:24px;
+}
+
+.submission-accepted {
+  color:var(--green);
+  background:var(--pale);
+}
+
+.submission-failed {
+  color:var(--error);
+  background:var(--error-bg);
+}
+
+.submission-filters {
+  grid-template-columns:1fr 1fr auto;
+}
+
+@media(max-width:680px) {
+  nav {
+    flex-wrap:wrap;
+    justify-content:flex-start;
+    gap:12px 20px;
+  }
+  .submission-filters {
+    grid-template-columns:1fr;
+  }
+  .submission-actions .button {
+    flex:1;
+  }
+}

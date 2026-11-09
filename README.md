@@ -1,6 +1,8 @@
 # Biue OJ
 
-面向编程练习与校内竞赛的在线评测系统，采用 Go 模块化单体架构。本次交付是**工程基础与账号认证**，完整需求见 [plan.md](plan.md)，分批计划见 [实施计划](docs/IMPLEMENTATION_PLAN.md)，实际改动与验证记录见 [修订日志](CHANGELOG.md)。
+面向编程练习与校内竞赛的在线评测系统，采用 Go 模块化单体架构。现已实现工程基础、账号认证、题库、不可变数据版本与提交任务基础，完整需求见 [plan.md](plan.md)，分批计划见 [实施计划](docs/IMPLEMENTATION_PLAN.md)，实际改动与验证记录见 [修订日志](CHANGELOG.md)。
+
+Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。1C、2B 和 2C 已完成本地验证，下一批接入 Worker 与独立 Runner；真实 MySQL/Redis、容器和部署验收仍待完成。
 
 ## 当前功能
 
@@ -9,9 +11,11 @@
 - 中文响应式首页、注册、登录、个人中心，使用 Go Template、原生 CSS/JavaScript，无前端构建步骤。
 - 版本化数据库迁移、超级管理员初始化、结构化日志、`/health` 与 `/ready`。
 - 开发用 Docker Compose：MySQL、Redis、一次性迁移、Web、Nginx；数据库端口不映射宿主机，业务容器无 Docker Socket。
-- 独立的测试数据 ZIP32 校验库：输入输出配对、分值、路径与资源限制、CRC 和稳定摘要；尚未接入上传接口或数据库版本管理。
+- 公开题库与题面，超级管理员创建、编辑、下架、标签/难度/可见性管理，修订号防止并发覆盖。
+- ZIP32 安全校验与有界上传、不可变题面/数据版本、分值与摘要、版本元数据历史，以及专用持久卷；隐藏输入输出不通过 HTTP 暴露。
+- Run/Submit 分离、版本固定、独立限流与队列容量控制；提交、任务、Outbox 同事务保存。CodeMirror 6 本地四语言编辑器、本人提交记录和状态轮询已接入，当前新任务保持 Pending，执行链路在 2D 实现。
 
-题目、四语言判题、比赛、三种计分、题单、讨论、题解和三个全局榜仍在后续批次。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
+四语言判题、比赛、三种计分、题单、讨论、题解和三个全局榜仍在后续批次。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
 
 ## 开发环境
 
@@ -127,7 +131,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs --tail 1
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e OJ_ADMIN_PASSWORD migrate admin-init --username admin
 ```
 
-用完后移除终端中的 `OJ_ADMIN_PASSWORD`。Compose 持久化使用 `mysql-data` 和 `redis-data` 命名卷。停止服务使用 `docker compose --env-file deploy/.env -f deploy/docker-compose.yml down`，此命令保留数据；不要添加 `--volumes`，它会删除数据卷。
+用完后移除终端中的 `OJ_ADMIN_PASSWORD`。Compose 持久化使用 `mysql-data`、`redis-data` 和 `problem-data` 命名卷。停止服务使用 `docker compose --env-file deploy/.env -f deploy/docker-compose.yml down`，此命令保留数据；不要添加 `--volumes`，它会删除数据卷。
 
 开发配置只绑定宿主机 `127.0.0.1`。修改访问端口时同步修改 `PUBLIC_HTTP_PORT` 和 `PUBLIC_URL`。容器内部 Web 固定使用 8080。`edge` 网络使用 `172.30.0.0/24`，Nginx 固定为 `172.30.0.10`，应用仅信任该 `/32` 代理；若本机已有同名网段，需同时修改 Compose 网段、Nginx 地址和 `TRUSTED_PROXY_CIDRS`。直接运行 Web 且无反向代理时，该变量留空。
 
@@ -141,13 +145,16 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 
 认证接口、请求与响应见 [API 文档](docs/API.md)；建表约束与迁移说明见 [数据库文档](docs/DATABASE.md)。
 
-测试数据解析器的格式、限制和调用方法见 [测试数据说明](docs/TEST_DATA.md)。它只返回已校验的内存数据，不写入文件、不执行程序，也不分配 `data_version`；题目上传、不可变版本持久化和比赛版本快照将在后续批次实现。
+测试数据解析器的格式、限制和调用方法见 [测试数据说明](docs/TEST_DATA.md)，题目 API、权限、修订号与 ZIP 上传见 [题目管理说明](docs/PROBLEMS.md)。解析器仍只返回内存数据；2B 服务将其发布为不可变版本并事务登记。PROBLEM_DATA_DIR 默认 oj-data/problem-data，Compose 固定挂载 /app/oj-data/problem-data；导入并发默认 2，可由 PROBLEM_IMPORT_CONCURRENCY 调整为 1～8。数据库与数据目录均需备份；已发布孤儿目录不会被自动删除，禁止仅凭提交错误自行删除。比赛版本快照留待比赛模块接入。
 
 | 路径 | 含义 |
 | --- | --- |
 | `/health` | Web 进程存活，不代表业务依赖可用 |
 | `/ready` | 检查 MySQL、Redis、迁移版本及 dirty 状态，失败返回 503 |
 | `/register`、`/login`、`/me` | 注册、登录与个人中心 |
+| `/problems`、`/problems/{id}` | 公开题库与题面 |
+| `/admin/problems` | 超级管理员题目管理与 ZIP 上传 |
+| `/submissions`、`/submissions/{id}` | 本人提交记录与详情；接口和限制见 [提交说明](docs/SUBMISSIONS.md) |
 
 依赖故障时健康接口仍可查询，相关业务返回 503；未实现的 Worker 和 Runner 不列为健康组件。
 
@@ -159,9 +166,13 @@ go vet ./...
 go build ./...
 go test -race ./...
 node --check webui/static/app.js
+node --check webui/static/problems.js
+node --check webui/static/submissions.js
+node --check webui/static/editor.js
+node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs
 ```
 
-联网环境先执行 `go mod download`，再运行上述全量检查；`go mod verify` 可核对本地模块缓存。`-race` 在 Windows 需要可用的 C 编译器。页面本身不依赖 Node，最后一条仅用于 JavaScript 语法检查。HTTP、sqlmock、miniredis 测试验证认证行为、事务边界与限流，不能代替真实 MySQL 唯一约束、迁移和 Redis 故障恢复验收。
+联网环境先执行 `go mod download`，再运行上述全量检查；`go mod verify` 可核对本地模块缓存。`-race` 在 Windows 需要可用的 C 编译器。页面本身不依赖 Node，Node 命令用于脚本语法和页面行为验证。HTTP、sqlmock、miniredis 测试验证认证行为、事务边界与限流，不能代替真实 MySQL 唯一约束、迁移和 Redis 故障恢复验收。
 
 首次开发遇到的 Go 依赖下载问题已通过正常授权的 HTTPS GET 路径解决，模块包与官方校验记录已锁定。首批全量单元测试、静态检查、构建及竞态检查已通过，也已验证真实 Web 进程在数据库和 Redis 不可用时仍可提供页面、CSRF 与健康检查。具体结果以 [CHANGELOG.md](CHANGELOG.md) 为准。
 

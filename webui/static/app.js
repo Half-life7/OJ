@@ -150,6 +150,7 @@
       setText("profile-account-type", { permanent: "永久账号", contest: "比赛临时账号" }[user.account_type] || user.account_type);
       setText("profile-status", { active: "正常", disabled: "已禁用", retired: "已停用" }[user.status] || user.status);
       setText("profile-role", { user: "普通用户", super_admin: "超级管理员" }[user.global_role] || user.global_role);
+      document.getElementById("profile-admin-link").hidden = user.global_role !== "super_admin";
       setText("profile-student-no", user.student_no);
       setText("profile-student-status", { none: "未填写", pending: "待审核", verified: "已验证", rejected: "审核未通过" }[user.student_no_status] || user.student_no_status);
       document.getElementById("profile-content").hidden = false;

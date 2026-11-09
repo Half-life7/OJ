@@ -46,8 +46,9 @@
 ## 2.1 后端
 
 - Go 1.22+
-- 标准库 net/http
-- 路由使用 chi
+- Web 框架使用 Gin
+- HTTP 服务底层基于 Go net/http
+- API 路由、中间件、参数绑定统一使用 Gin
 - 数据库访问使用 sqlx
 - MySQL 8
 - Redis

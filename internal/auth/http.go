@@ -1,21 +1,18 @@
 package auth
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"io"
-	"mime"
 	"net"
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"biue/internal/httpx"
+	"biue/internal/server"
+
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/csrf"
 )
 
@@ -35,70 +32,51 @@ type passwordRequest struct {
 	Confirmation string `json:"password_confirmation"`
 }
 
-func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Get("/api/auth/csrf", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, 0, "success", map[string]string{"csrf_token": csrf.Token(r)})
+func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
+	r.GET("/api/auth/csrf", func(c *gin.Context) {
+		writeJSON(c, http.StatusOK, 0, "success", map[string]string{"csrf_token": csrf.Token(c.Request)})
 	})
-	r.Post("/api/auth/register", s.registerHTTP)
-	r.Post("/api/auth/login", s.loginHTTP)
-	r.Post("/api/auth/logout", s.logoutHTTP)
-	r.Post("/api/auth/password", s.passwordHTTP)
-	r.Get("/api/users/me", s.meHTTP)
+	r.POST("/api/auth/register", s.registerHTTP)
+	r.POST("/api/auth/login", s.loginHTTP)
+	r.POST("/api/auth/logout", s.logoutHTTP)
+	r.POST("/api/auth/password", s.passwordHTTP)
+	r.GET("/api/users/me", s.meHTTP)
 }
 
-func writeJSON(w http.ResponseWriter, status, code int, message string, data any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(struct {
+func writeJSON(c *gin.Context, status, code int, message string, data any) {
+	c.Header("Cache-Control", "no-store")
+	c.JSON(status, struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Data    any    `json:"data"`
 	}{code, message, data})
 }
 
-func writeError(w http.ResponseWriter, err error) {
+func writeError(c *gin.Context, err error) {
+	c.Abort()
 	switch {
 	case errors.Is(err, ErrInvalid):
-		writeJSON(w, 400, 40001, "请求参数不合法", nil)
+		writeJSON(c, 400, 40001, "请求参数不合法", nil)
 	case errors.Is(err, ErrCredentials):
-		writeJSON(w, 401, 40101, "账号、密码或会话无效", nil)
+		writeJSON(c, 401, 40101, "账号、密码或会话无效", nil)
 	case errors.Is(err, ErrConflict):
-		writeJSON(w, 409, 40901, "账号或身份信息不可用", nil)
+		writeJSON(c, 409, 40901, "账号或身份信息不可用", nil)
 	case errors.Is(err, ErrRateLimited):
-		w.Header().Set("Retry-After", "60")
-		writeJSON(w, 429, 42901, "请求过于频繁，请稍后重试", nil)
+		c.Header("Retry-After", "60")
+		writeJSON(c, 429, 42901, "请求过于频繁，请稍后重试", nil)
 	default:
-		writeJSON(w, 503, 50301, "服务暂时不可用，请稍后重试", nil)
+		writeJSON(c, 503, 50301, "服务暂时不可用，请稍后重试", nil)
 	}
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
-		return ErrInvalid
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	decoder := json.NewDecoder(r.Body)
-	var raw json.RawMessage
-	if err = decoder.Decode(&raw); err != nil {
-		return ErrInvalid
-	}
-	// encoding/json otherwise replaces malformed UTF-8 with U+FFFD. Reject it
-	// before decoding credentials so hashing never silently changes the input.
-	if !utf8.Valid(raw) {
-		return ErrInvalid
-	}
-	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
-		return ErrInvalid
-	}
-	var extra any
-	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return ErrInvalid
-	}
-	objectDecoder := json.NewDecoder(bytes.NewReader(raw))
-	objectDecoder.DisallowUnknownFields()
-	if err = objectDecoder.Decode(target); err != nil {
+// Keep the auth contract stricter than Gin's default JSON binding without
+// changing package-level binding options shared by every router.
+type strictJSONBinding struct{}
+
+func (strictJSONBinding) Name() string { return "strict-json" }
+
+func (strictJSONBinding) Bind(r *http.Request, target any) error {
+	if err := (httpx.JSONBinding{MaxBytes: 16 << 10}).Bind(r, target); err != nil {
 		return ErrInvalid
 	}
 	return nil
@@ -120,87 +98,92 @@ func (s *Service) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: "", Path: "/", HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0).UTC()})
 }
 
-func (s *Service) registerHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Service) registerHTTP(c *gin.Context) {
+	r := c.Request
 	var body registerRequest
-	if err := decodeJSON(w, r, &body); err != nil {
-		writeError(w, err)
+	if err := c.ShouldBindWith(&body, strictJSONBinding{}); err != nil {
+		writeError(c, err)
 		return
 	}
 	if err := s.limit(r, "register", body.Username); err != nil {
-		writeError(w, err)
+		writeError(c, err)
 		return
 	}
-	user, err := s.Register(r.Context(), body.Username, body.Password, body.Confirmation, body.StudentNo, middleware.GetReqID(r.Context()))
+	user, err := s.Register(r.Context(), body.Username, body.Password, body.Confirmation, body.StudentNo, server.RequestID(r.Context()))
 	if err != nil {
-		writeError(w, err)
+		writeError(c, err)
 		return
 	}
-	writeJSON(w, 201, 0, "success", user)
+	writeJSON(c, 201, 0, "success", user)
 }
 
-func (s *Service) loginHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Service) loginHTTP(c *gin.Context) {
+	r := c.Request
 	var body loginRequest
-	if err := decodeJSON(w, r, &body); err != nil {
-		writeError(w, err)
+	if err := c.ShouldBindWith(&body, strictJSONBinding{}); err != nil {
+		writeError(c, err)
 		return
 	}
 	if err := s.limit(r, "login", body.Username); err != nil {
-		writeError(w, err)
+		writeError(c, err)
 		return
 	}
-	token, user, err := s.Login(r.Context(), body.Username, body.Password, middleware.GetReqID(r.Context()))
+	token, user, err := s.Login(r.Context(), body.Username, body.Password, server.RequestID(r.Context()))
 	if err != nil {
-		writeError(w, err)
+		writeError(c, err)
 		return
 	}
-	s.setCookie(w, token)
-	writeJSON(w, 200, 0, "success", user)
+	s.setCookie(c.Writer, token)
+	writeJSON(c, 200, 0, "success", user)
 }
 
-func (s *Service) logoutHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Service) logoutHTTP(c *gin.Context) {
+	r := c.Request
 	// A bodyless logout is valid. When a body is supplied (including an
 	// unknown-length/chunked body), enforce the same bounded JSON contract.
 	if r.Body != nil && r.Body != http.NoBody {
 		var body struct{}
-		if err := decodeJSON(w, r, &body); err != nil {
-			writeError(w, err)
+		if err := c.ShouldBindWith(&body, strictJSONBinding{}); err != nil {
+			writeError(c, err)
 			return
 		}
 	}
-	if err := s.Logout(r.Context(), rawCookie(r), middleware.GetReqID(r.Context())); err != nil {
-		writeError(w, err)
+	if err := s.Logout(r.Context(), rawCookie(r), server.RequestID(r.Context())); err != nil {
+		writeError(c, err)
 		return
 	}
-	s.clearCookie(w)
-	writeJSON(w, 200, 0, "success", map[string]any{})
+	s.clearCookie(c.Writer)
+	writeJSON(c, 200, 0, "success", map[string]any{})
 }
 
-func (s *Service) passwordHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Service) passwordHTTP(c *gin.Context) {
+	r := c.Request
 	var body passwordRequest
-	if err := decodeJSON(w, r, &body); err != nil {
-		writeError(w, err)
+	if err := c.ShouldBindWith(&body, strictJSONBinding{}); err != nil {
+		writeError(c, err)
 		return
 	}
 	// Password verification also uses bcrypt; rate-limit it independently from login.
 	if err := s.limit(r, "password", hashJTI(rawCookie(r))); err != nil {
-		writeError(w, err)
+		writeError(c, err)
 		return
 	}
-	if err := s.ChangePassword(r.Context(), rawCookie(r), body.Current, body.Password, body.Confirmation, middleware.GetReqID(r.Context())); err != nil {
-		writeError(w, err)
+	if err := s.ChangePassword(r.Context(), rawCookie(r), body.Current, body.Password, body.Confirmation, server.RequestID(r.Context())); err != nil {
+		writeError(c, err)
 		return
 	}
-	s.clearCookie(w)
-	writeJSON(w, 200, 0, "success", map[string]any{})
+	s.clearCookie(c.Writer)
+	writeJSON(c, 200, 0, "success", map[string]any{})
 }
 
-func (s *Service) meHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Service) meHTTP(c *gin.Context) {
+	r := c.Request
 	user, err := s.CurrentUser(r.Context(), rawCookie(r))
 	if err != nil {
-		writeError(w, err)
+		writeError(c, err)
 		return
 	}
-	writeJSON(w, 200, 0, "success", user)
+	writeJSON(c, 200, 0, "success", user)
 }
 
 // Both counters are advanced atomically. Hashing keeps usernames and IPs out of Redis key names.

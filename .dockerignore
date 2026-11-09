@@ -1,5 +1,6 @@
 .git
 .cache
+**/node_modules
 .env
 .env.*
 **/.env

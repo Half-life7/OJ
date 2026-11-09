@@ -21,6 +21,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jmoiron/sqlx"
@@ -462,16 +463,54 @@ func TestHTTPAuthenticationLifecycleAndCSRF(t *testing.T) {
 	}
 }
 
+// Focus binding tests on the registered Gin handlers; server integration tests
+// above and below exercise the CSRF/readiness middleware as well.
+func authHTTPHandler(s *Service) http.Handler {
+	r := gin.New()
+	s.RegisterRoutes(r.Group(""))
+	return r
+}
+
 func TestHTTPMalformedInputAndCookieSecure(t *testing.T) {
 	f := setup(t)
-	for _, body := range []string{`null`, `{}`, `{"username":"a"} {}`, strings.Repeat(" ", 16385) + `{}`} {
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		f.s.loginHTTP(w, r)
-		if w.Code != 400 && w.Code != 401 {
-			t.Fatalf("malformed login %d", w.Code)
-		}
+	handler := authHTTPHandler(f.s)
+	for _, tc := range []struct {
+		name, body, contentType string
+		status                  int
+	}{
+		{"null", `null`, "application/json", 400},
+		{"array", `[]`, "application/json", 400},
+		{"JSON string", `"value"`, "application/json", 400},
+		{"empty document", ``, "application/json", 400},
+		{"empty object", `{}`, "application/json", 401},
+		{"two documents", `{"username":"a"} {}`, "application/json", 400},
+		{"unknown field", `{"global_role":"super_admin"}`, "application/json", 400},
+		{"wrong type", `{"username":7}`, "application/json", 400},
+		{"wrong content type", `{}`, "text/plain", 400},
+		{"JSON charset", `{}`, "application/json; charset=utf-8", 401},
+		{"at size limit", `{}` + strings.Repeat(" ", (16<<10)-2), "application/json", 401},
+		{"oversized leading whitespace", strings.Repeat(" ", 16<<10) + `{}`, "application/json", 400},
+		{"oversized trailing whitespace", `{}` + strings.Repeat(" ", (16<<10)-1), "application/json", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", tc.contentType)
+			handler.ServeHTTP(w, r)
+			if w.Code != tc.status {
+				t.Fatalf("got %d, want %d: %s", w.Code, tc.status, w.Body)
+			}
+			var envelope struct {
+				Code int `json:"code"`
+				Data any `json:"data"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil || envelope.Code != tc.status*100+1 || envelope.Data != nil {
+				t.Fatalf("binding changed error envelope: %s (%v)", w.Body, err)
+			}
+			if w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("binding errors must not be cached")
+			}
+		})
 	}
 	f.s.cfg.CookieSecure = true
 	w := httptest.NewRecorder()
@@ -490,7 +529,7 @@ func TestHTTPRejectsMalformedUTF8BeforeCredentialDecoding(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	f.s.loginHTTP(w, r)
+	authHTTPHandler(f.s).ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("malformed UTF-8 returned %d: %s", w.Code, w.Body)
 	}
@@ -570,6 +609,7 @@ func TestLogoutInputContractWithoutStorageCalls(t *testing.T) {
 		{name: "bodyless", noBody: true, status: 200},
 		{name: "empty JSON object", body: `{}`, contentType: "application/json", status: 200},
 		{name: "chunked JSON object", body: `{}`, contentType: "application/json", chunked: true, status: 200},
+		{name: "JSON object at size limit", body: `{}` + strings.Repeat(" ", (16<<10)-2), contentType: "application/json", status: 200},
 		{name: "null", body: `null`, contentType: "application/json", status: 400},
 		{name: "array", body: `[]`, contentType: "application/json", status: 400},
 		{name: "unknown field", body: `{"unexpected":true}`, contentType: "application/json", status: 400},
@@ -577,6 +617,7 @@ func TestLogoutInputContractWithoutStorageCalls(t *testing.T) {
 		{name: "wrong content type", body: `{}`, contentType: "text/plain", status: 400},
 		{name: "oversized", body: strings.Repeat(" ", (16<<10)+1) + `{}`, contentType: "application/json", status: 400},
 		{name: "chunked oversized", body: strings.Repeat(" ", (16<<10)+1) + `{}`, contentType: "application/json", chunked: true, status: 400},
+		{name: "oversized trailing whitespace", body: `{}` + strings.Repeat(" ", (16<<10)-1), contentType: "application/json", status: 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t)
@@ -594,7 +635,7 @@ func TestLogoutInputContractWithoutStorageCalls(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			// No SQL expectations: malformed/anonymous logout must never touch storage.
-			f.s.logoutHTTP(w, r)
+			authHTTPHandler(f.s).ServeHTTP(w, r)
 			if w.Code != tc.status {
 				t.Fatalf("got %d, want %d: %s", w.Code, tc.status, w.Body)
 			}

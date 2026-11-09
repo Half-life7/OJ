@@ -262,6 +262,11 @@ func readFile(ctx context.Context, f *zip.File, limits Limits, total int64) ([]b
 	return data, nil
 }
 
+// Fingerprint returns the versioned content fingerprint for an already validated,
+// ID-sorted case list. It does not validate or reorder cases. Persisted datasets
+// use this same encoding to verify that their content still matches Parse.
+func Fingerprint(cases []Case) [32]byte { return digest(cases) }
+
 func digest(cases []Case) [32]byte {
 	h := sha256.New()
 	_, _ = h.Write([]byte("biue-testdata-v1\x00"))
