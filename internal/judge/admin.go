@@ -92,7 +92,7 @@ func (a *JudgeAdmin) RetryDead(ctx context.Context, actor, id, generation uint64
 		Generation uint64 `db:"generation"`
 		Status     Status `db:"status"`
 	}
-	if tx.GetContext(ctx, &current, `SELECT generation, status FROM submissions WHERE id = ? FOR UPDATE`, dead.SubmissionID) != nil {
+	if tx.GetContext(ctx, &current, `SELECT generation, status FROM submissions WHERE id = ? AND (contest_id IS NULL OR NOT EXISTS (SELECT 1 FROM contests WHERE contests.id=submissions.contest_id AND settled_at IS NOT NULL)) FOR UPDATE`, dead.SubmissionID) != nil {
 		return TaskEnvelope{}, ErrAdminConflict
 	}
 	if current.Generation != generation || dead.Generation != generation || current.Status != SystemError || dead.Attempt != MaxAttempts {

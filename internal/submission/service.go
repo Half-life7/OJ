@@ -70,7 +70,7 @@ type pinnedProblem struct {
 // Create serializes admission before locking account and problem rows. The
 // submission, task, outbox intent and audit either commit together or not at all.
 func (s *Service) Create(ctx context.Context, actor Actor, kind string, input CreateInput, requestID string) (Submission, error) {
-	if actor.ID == 0 || actor.AccountType != "permanent" {
+	if actor.ID == 0 || (actor.AccountType != "permanent" && (input.ContestID == 0 || actor.AccountType != "contest")) {
 		return Submission{}, ErrForbidden
 	}
 	if err := validateCreate(kind, input); err != nil {
@@ -105,11 +105,20 @@ func (s *Service) Create(ctx context.Context, actor Actor, kind string, input Cr
 	if err != nil {
 		return Submission{}, s.unavailable("account_lock")
 	}
-	if account.AccountType != "permanent" || account.Status != "active" {
+	if (account.AccountType != "permanent" && (input.ContestID == 0 || account.AccountType != "contest")) || account.Status != "active" {
 		return Submission{}, ErrForbidden
 	}
 	var problem pinnedProblem
-	err = tx.GetContext(ctx, &problem, `SELECT p.id, p.statement_version, COALESCE(p.data_version, 0) AS data_version, pv.snapshot_json, COALESCE(dv.case_count, 0) AS case_count FROM problems p JOIN problem_versions pv ON pv.problem_id = p.id AND pv.version = p.statement_version LEFT JOIN problem_data_versions dv ON dv.problem_id = p.id AND dv.data_version = p.data_version WHERE p.id = ? AND p.status = 'published' AND p.visibility = 'public' FOR SHARE`, input.ProblemID)
+	now := s.now().UTC().Truncate(time.Microsecond)
+	var teamID uint64
+	if input.ContestID != 0 {
+		teamID, problem, err = s.pinContest(ctx, tx, actor.ID, input.ContestID, input.ProblemID, now)
+	} else {
+		err = tx.GetContext(ctx, &problem, `SELECT p.id, p.statement_version, COALESCE(p.data_version, 0) AS data_version, pv.snapshot_json, COALESCE(dv.case_count, 0) AS case_count FROM problems p JOIN problem_versions pv ON pv.problem_id = p.id AND pv.version = p.statement_version LEFT JOIN problem_data_versions dv ON dv.problem_id = p.id AND dv.data_version = p.data_version WHERE p.id = ? AND p.status = 'published' AND p.visibility = 'public' FOR SHARE`, input.ProblemID)
+	}
+	if errors.Is(err, ErrForbidden) {
+		return Submission{}, err
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return Submission{}, ErrNotFound
 	}
@@ -147,8 +156,14 @@ func (s *Service) Create(ctx context.Context, actor Actor, kind string, input Cr
 	if problem.DataVersion != 0 {
 		dataVersion = problem.DataVersion
 	}
-	now := s.now().UTC().Truncate(time.Microsecond)
-	result, err := tx.ExecContext(ctx, `INSERT INTO submissions (user_id, problem_id, statement_version, data_version, contest_id, contest_team_id, kind, language, source_code, stdin, generation, status, score, execution_time_ms, memory_usage_kb, passed_cases, total_cases, output, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 1, 'Pending', 0, 0, 0, 0, ?, '', '', ?, ?)`, actor.ID, input.ProblemID, problem.StatementVersion, dataVersion, kind, input.Language, input.SourceCode, stdin, totalCases, now, now)
+	insertSQL := `INSERT INTO submissions (user_id, problem_id, statement_version, data_version, contest_id, contest_team_id, kind, language, source_code, stdin, generation, status, score, execution_time_ms, memory_usage_kb, passed_cases, total_cases, output, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 1, 'Pending', 0, 0, 0, 0, ?, '', '', ?, ?)`
+	args := []any{actor.ID, input.ProblemID, problem.StatementVersion, dataVersion}
+	if input.ContestID != 0 {
+		insertSQL = strings.Replace(insertSQL, "NULL, NULL", "?, ?", 1)
+		args = append(args, input.ContestID, teamID)
+	}
+	args = append(args, kind, input.Language, input.SourceCode, stdin, totalCases, now, now)
+	result, err := tx.ExecContext(ctx, insertSQL, args...)
 	if err != nil {
 		return Submission{}, s.unavailable("create_submission")
 	}
@@ -241,8 +256,8 @@ func (s *Service) Get(ctx context.Context, actor Actor, id uint64) (Submission, 
 	query := "SELECT " + summaryColumns + ", s.source_code, s.stdin, s.output, s.error_message FROM submissions s WHERE s.id = ?"
 	args := []any{id}
 	if actor.Role != "super_admin" {
-		query += " AND s.user_id = ?"
-		args = append(args, actor.ID)
+		query += " AND (s.user_id = ? OR EXISTS (SELECT 1 FROM contest_admins ca WHERE ca.contest_id=s.contest_id AND ca.user_id=?))"
+		args = append(args, actor.ID, actor.ID)
 	}
 	var submission Submission
 	err := s.db.GetContext(ctx, &submission, query, args...)

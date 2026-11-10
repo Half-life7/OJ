@@ -1,12 +1,14 @@
 # Biue OJ
 
-最新进度：**2D 已完成并通过真实 MySQL/Redis/Linux Docker 验收**，包含常驻 Worker、独立四语言 Runner、持久化防重/租约、结果后 ACK、重试/死信、Redis 对账恢复、消息隔离及人工重试。新构建要求迁移至版本 5；部署、边界与验收命令见 [2D Runner 说明](docs/RUNNER.md)，实际记录见 CHANGELOG.md。
+最新进度：**批次 3 已完成**，包括身份审核与关联、比赛与队伍、临时账号、三种独立计分、固定版本比赛提交、成绩快照及幂等结算。当前构建要求迁移至版本 **6**；真实 MySQL/Redis、比赛 Python Docker 判题、并发结算及 Edge 桌面/手机页面已验收，详见 [比赛说明](docs/CONTESTS.md)。此前 2D 四语言判题验收与故障矩阵见 [Runner 说明](docs/RUNNER.md)。
 
 面向编程练习与校内竞赛的在线评测系统，采用 Go 模块化单体架构。现已实现工程基础、账号认证、题库、不可变数据版本与提交任务基础，完整需求见 [plan.md](plan.md)，分批计划见 [实施计划](docs/IMPLEMENTATION_PLAN.md)，实际改动与验证记录见 [修订日志](CHANGELOG.md)。
 
 Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。四语言镜像已实际构建，amd64 全链路及故障恢复通过；arm64 已交叉编译并通过仿真启动，原生 arm64/生产整机验收留在后续部署批次。
 
 ## 当前功能
+
+- 比赛中心 `/contests`：报名、队伍、临时账号、名单筛选、三种计分、比赛提交、结算；身份审核与显式账号关联 `/admin/identities`。
 
 - 永久账号开放注册，账号 ID 独立于可选学号；身份档案保存唯一学号及审核状态。
 - 登录、退出、修改密码、查看个人资料；持久化会话撤销、改密后旧会话失效、Cookie、CSRF 与 Redis 限流。
@@ -18,7 +20,7 @@ Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由�
 - Run/Submit 分离、版本固定、独立限流与队列容量控制；提交、任务、Outbox 同事务保存。CodeMirror 6 本地四语言编辑器、本人提交记录和状态轮询已接入。Worker 在依赖就绪后领取 Pending 任务并调用认证 Runner，真实结果同事务保存后才确认消息。
 - 四语言编译/执行、每点独立沙箱、禁网/只读根目录/CPU/内存/PID/时间/输出限制、执行重试与死信、消息隔离、Redis 数据丢失后的 Outbox 对账及经管理员授权的死信 CLI。
 
-比赛、三种计分、题单、讨论、题解和三个全局榜仍在后续批次。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
+题单、讨论、题解和三个全局榜在批次 4；CSV 导入、封榜和完整批量管理在批次 5。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
 
 ## 开发环境
 
@@ -144,7 +146,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 
 可配置项见 [环境变量示例](deploy/.env.example)。JWT、CSRF 和应用加密密钥各至少 32 字节且必须不同；密码和密钥不得写进代码或提交到版本库。生产环境拒绝明显占位值及弱密码。修改配置后重启对应进程；Compose 环境变量变更后使用 `up -d` 重建受影响容器。
 
-`APP_ENCRYPTION_KEY` 为后续需要加密存储的功能预留，本批不将密码以可逆方式加密。密码仅保存 bcrypt 哈希。默认会话时长为 12 小时，无 refresh token 或密码找回流程。学号为空时不影响注册，填写后显示待审核；学号审核与身份纠错后台在后续批次交付。
+`APP_ENCRYPTION_KEY` 为后续需要加密存储的功能预留，本批不将密码以可逆方式加密。密码仅保存 bcrypt 哈希。默认会话时长为 12 小时，无 refresh token 或密码找回流程。学号为空时不影响注册，填写后显示待审核；学号审核与身份纠错已在 `/admin/identities` 交付。
 
 认证接口、请求与响应见 [API 文档](docs/API.md)；建表约束与迁移说明见 [数据库文档](docs/DATABASE.md)。
 
@@ -182,3 +184,5 @@ node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs
 本机 Docker Desktop 已启动；真实 MySQL/Redis、四语言镜像构建、Linux/amd64 判题及故障恢复通过，arm64 静态程序的仿真启动也已通过。完整生产部署、原生 arm64 整机与长期压力/备份恢复另列后续；交叉编译或仿真启动不能替代原生平台完整验收。
 
 后续开发按实施计划推进，每批同步修订日志，保留原始需求及历史数据。
+
+下一目标为批次 4（日常业务与三个全局榜），建议使用 **GPT-6.1 Sol + high（高）思考强度**。各节点建议见 [实施计划](docs/IMPLEMENTATION_PLAN.md)。

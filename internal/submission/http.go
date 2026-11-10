@@ -200,13 +200,14 @@ func (h *Handler) get(c *gin.Context) {
 func (h *Handler) create(kind string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		a := actor(c)
-		if a.AccountType != "permanent" {
+		if a.AccountType != "permanent" && a.AccountType != "contest" {
 			respondError(c, ErrForbidden)
 			return
 		}
 		var input CreateInput
 		if kind == string(judge.Submit) {
 			var body struct {
+				ContestID  uint64 `json:"contest_id"`
 				ProblemID  uint64 `json:"problem_id"`
 				Language   string `json:"language"`
 				SourceCode string `json:"source_code"`
@@ -215,8 +216,16 @@ func (h *Handler) create(kind string) gin.HandlerFunc {
 				respondError(c, err)
 				return
 			}
-			input = CreateInput{ProblemID: body.ProblemID, Language: body.Language, SourceCode: body.SourceCode}
+			input = CreateInput{ContestID: body.ContestID, ProblemID: body.ProblemID, Language: body.Language, SourceCode: body.SourceCode}
 		} else if err := c.ShouldBindWith(&input, httpx.JSONBinding{MaxBytes: 256 << 10}); err != nil {
+			respondError(c, err)
+			return
+		}
+		if a.AccountType == "contest" && input.ContestID == 0 {
+			respondError(c, ErrForbidden)
+			return
+		}
+		if err := validateCreate(kind, input); err != nil {
 			respondError(c, err)
 			return
 		}

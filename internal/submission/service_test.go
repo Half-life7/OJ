@@ -321,7 +321,7 @@ func TestOwnSubmissionListNeverSelectsSourceOrOutput(t *testing.T) {
 
 func TestAnotherUsersSubmissionReturnsNotFound(t *testing.T) {
 	f := newPersistenceFixture(t)
-	f.mock.ExpectQuery(regexp.QuoteMeta("SELECT "+summaryColumns+", s.source_code, s.stdin, s.output, s.error_message FROM submissions s WHERE s.id = ? AND s.user_id = ?")).WithArgs(uint64(101), uint64(8)).WillReturnError(sql.ErrNoRows)
+	f.mock.ExpectQuery(regexp.QuoteMeta("SELECT "+summaryColumns+", s.source_code, s.stdin, s.output, s.error_message FROM submissions s WHERE s.id = ? AND (s.user_id = ? OR EXISTS (SELECT 1 FROM contest_admins ca WHERE ca.contest_id=s.contest_id AND ca.user_id=?))")).WithArgs(uint64(101), uint64(8), uint64(8)).WillReturnError(sql.ErrNoRows)
 	if _, err := f.service.Get(context.Background(), Actor{ID: 8, AccountType: "permanent"}, 101); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestFormalOutputsAlwaysHiddenAndRunOutputOwned(t *testing.T) {
 		{"Submit", judge.RuntimeError, false}, {"Submit", judge.CompileError, true}, {"Run", judge.RuntimeError, true},
 	} {
 		f := newPersistenceFixture(t)
-		f.mock.ExpectQuery("SELECT .* FROM submissions s WHERE s.id = \\? AND s.user_id = \\?").WithArgs(uint64(101), uint64(7)).WillReturnRows(summaryRows(tc.kind, tc.status, true))
+		f.mock.ExpectQuery("SELECT .* FROM submissions s WHERE s.id = \\? AND \\(s.user_id = \\? OR EXISTS").WithArgs(uint64(101), uint64(7), uint64(7)).WillReturnRows(summaryRows(tc.kind, tc.status, true))
 		got, err := f.service.Get(context.Background(), permanentActor, 101)
 		if err != nil {
 			t.Fatal(err)

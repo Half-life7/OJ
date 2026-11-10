@@ -1,0 +1,72 @@
+# 批次 3：身份、比赛与计分
+
+状态：已完成（2026-11-10）。迁移版本为 6。
+
+## 交付与验收
+
+- 已实现独立 OI/ACM/IOI 引擎、身份审核/纠错与显式关联、比赛授权/赛前编辑、个人和团队报名、打星/退赛恢复、临时账号创建与报废、比赛版本固定与提交接线、成绩重建、结算快照和积分账本，以及比赛与身份管理页面。
+- 已通过全量 Go 单测、vet、build；最新源码的全量 race 通过。新增脚本语法检查通过。
+- 独立 Docker 项目 `biue-batch3` 的 MySQL 迁移 6 与重复启动通过。`python tools/check_contests.py` 已通过三种模式的真实 API/SQL 权限、退赛恢复、乱序计分、未完成评测拒绝结算、重复结算、团队唯一性、显式身份关联后积分去重和临时账号检查。计分结果由 SQL 测试夹具构造，此轮不算真实沙箱端到端验收。
+- 最终源码已重建容器；真实 Python Docker 沙箱 → 逐点持久化 → 比赛榜单 → 结算已通过，未伪造判题结果。并发退赛/提交及四个并发结算请求已验证，结算只产生一个快照和一笔身份积分。
+- 实际 Edge 桌面及 390px 手机视口已验证登录、比赛创建/赛前编辑、题目固定、临时账号加入、名单搜索/类型筛选、身份选择与账号编号展示，无 JavaScript 异常。截图保存于 `.cache/3-contests-desktop.png` 和 `.cache/3-contests-mobile.png`。
+- CSV 预览导入、封榜/解封、完整批量管理、生产容量与原生 arm64 部署验收依实施计划留在批次 5；本轮并发验收不代表长期容量压测。
+
+实施顺序：独立计分引擎与回归 → 身份审核/纠错与关联 → 比赛、授权、队伍和报名 → 固定比赛版本的提交接线 → 榜单快照、结算与页面 → 真实环境验收。
+
+## 规则与事务边界
+
+- 比赛时间采用 UTC，参赛窗口为 `[starts_at, ends_at)`；开始后锁定模式、题目版本及队伍成员。个人赛一人一队，团队赛由管理员管理成员。
+- 学号审核、纠错和清除保存历史与审计；身份关联必须显式操作，历史参赛身份快照不随当前身份修改。
+- 普通账号只能自由报名 open 比赛；admin_add 只允许被授权管理员添加。无学号不影响报名。待审核、退赛或不属于该比赛的账号不能提交。
+- 比赛题目固定题面和数据版本，提交记录持有比赛与队伍 ID。所有提交继续使用现有准入锁、Outbox、Worker 和 Runner。
+- 排行榜按队伍计算，仅正式有效队伍占据名次。并列使用竞赛排名（1、1、3）；打星、退赛保留成绩，不获得正式名次或积分。
+- OI 取每题完整提交最高分；IOI 取每测试点历史最高分，独立实现。两者的同分比较取按提交时间回放时最后提升成绩的时间。
+- ACM 仅 WA、TLE、MLE、RE 增加首次 AC 前错误次数；CE、SE、Cancelled 不罚时。未 AC 题保留错误次数，罚时不计入总和；首次 AC 后提交不再改变成绩。
+- 以提交时间及提交 ID 排序回放当前 generation 的结果，避免重复或乱序完成改变结果。Run 不进入计分。重判通过重建替换统计，不能增量叠加旧成绩。
+- 结算仅在比赛结束、所有正式提交终态且结果齐备后进行。结算快照及按 person 去重的积分账本同事务落盘；重复结算返回既有结果。
+- 积分策略默认 `round(100 × (N-rank+1)/N)`，N 为正式有效队伍数。同一 person 在同场比赛至多获得一次积分。
+- 参赛身份快照在加入时保存；结算按当时明确关联后的 person 去重取最高积分，已结算账本不随之后身份关联改写。积分策略可通过 `NewWithPointsPolicy` 注入，策略名写入审计。
+
+## 页面与接口
+
+页面：`/contests`、`/admin/identities`。比赛中心提供名单搜索，按选手类型、参赛状态、账号类型与最少提交次数筛选。身份列表同时展示关联账号 ID 和数字编号。
+
+以下接口均需有效会话，写接口沿用全站 Origin/CSRF 防护，JSON 上限 64 KiB；越权返回 403，状态/唯一性冲突返回 409，内部错误隐藏为 503。比赛提交另沿用原有 Run/Submit 限流。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET / POST | `/api/contests` | 游标列表（`after`，最多 100 条）/超级管理员创建 |
+| GET / PUT | `/api/contests/:id` | 比赛、题面、名单、成绩/赛前配置更新（带 revision） |
+| POST | `/api/contests/:id/enroll` | 永久账号自由报名个人赛 |
+| POST | `/api/contests/:id/manage` | 授权管理员管理题目、队伍、状态；超级管理员授予/撤销比赛管理员 |
+| POST | `/api/contests/:id/temporary-accounts` | 管理员创建临时账号并加入比赛，密码不进入审计 |
+| GET | `/api/contests/:id/submissions` | 本人或授权管理员查看成员提交；支持 user_id、after，每页最多 100 条 |
+| POST | `/api/contests/:id/settle` | 授权管理员幂等结算 |
+| GET | `/api/admin/persons` | 超级管理员游标读取身份及关联账号 |
+| PUT | `/api/admin/persons/:id` | revision、显示名、学号/审核状态、组织及必填 reason |
+| POST | `/api/admin/identity-links` | user_id、from_person_id、to_person_id、reason，显式关联 |
+
+manage 的 action：`add_problem` / `remove_problem`、`add_team`（name、members 数字账号 ID 数组、participant_type）、`team_status`（team_id、status、participant_type）、`grant_admin` / `revoke_admin`（user_id）、`retire_account`（赛后临时账号）。赛前可以增减题目并绑定当时版本，开始后固定。团队赛通过管理员提交成员列表建立，多账号对应同一 person 时拒绝重复入场。
+
+非成员只能读取比赛配置；普通成员赛前看不到题面。名单/榜单对成员及授权管理员开放；提交源码仅本人、该比赛管理员、超级管理员可读。结算后只允许报废临时账号，不允许再改变比赛成绩配置或启动人工重试。
+
+## 复现命令
+
+使用独立 `biue-batch3` 项目及单独环境文件，先配置示例环境变量和验收管理员。`tools/contest-test.compose.yml` 为测试网段覆盖，避免与开发网段冲突。脚本默认读取 `.cache/2d-acceptance.env`，可通过 `--env-file` 指定；另需 `BIUE_SMOKE_PASSWORD` 为测试管理员密码，不输出凭据。
+
+```text
+go test ./...
+go vet ./...
+go build ./...
+go test -race ./...
+node --check webui/static/contests.js
+python tools/check_contests.py
+python tools/check_contest_runtime.py
+node tools/check_contest_browser.cjs
+```
+
+SQL 夹具脚本需在独立测试项目中、Worker/dispatcher 停止时运行；随后启动 Worker/dispatcher/Runner 再执行 runtime 脚本。浏览器脚本在 Windows 使用已安装的 Edge，Playwright 安装在 `.cache/browser`（`npm install --prefix .cache/browser playwright`）；默认使用上述验收环境文件。测试脚本创建新记录，不清空库或删除既有数据。
+
+## 验收
+
+覆盖三种模式的部分分、零分、并列、乱序与重复、CE/SE、首次 AC、不同提交贡献不同测试点、Run 排除、溢出与非法输入；覆盖身份冲突、越权、报名重复、队伍唯一性、退赛恢复、开始后修改拒绝、比赛版本固定、结算幂等及未完成判题拒绝结算。数据库和浏览器验收独立记录，不以单元测试替代。

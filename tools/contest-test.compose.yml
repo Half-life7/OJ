@@ -1,0 +1,13 @@
+services:
+  web:
+    environment:
+      TRUSTED_PROXY_CIDRS: 172.31.9.10/32
+  nginx:
+    networks:
+      edge:
+        ipv4_address: 172.31.9.10
+networks:
+  edge:
+    ipam:
+      config: !override
+        - subnet: 172.31.9.0/24

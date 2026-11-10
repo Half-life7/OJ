@@ -1,5 +1,7 @@
 # 数据库说明
 
+当前构建期望迁移版本 **6**。批次 3 新增 contests、contest_admins、contest_problems、contest_teams、contest_team_members、contest_snapshots、contest_points；persons 增加 organization 与 revision，submissions 增加比赛/队伍引用约束。参赛身份快照、每轮逐点结果及结算积分保留历史；积分主键 `(contest_id, person_id)` 防止重复入账。规则见 [比赛说明](CONTESTS.md)。迁移 6 回退在已有比赛提交时主动拒绝恢复“仅日常提交”约束，避免静默删除历史。
+
 迁移 1 为身份与认证，迁移 2 为题目与不可变版本，迁移 3 为提交与任务基础，迁移 4 为执行重试与死信，迁移 5 为消息隔离；当前期望版本为 5。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收结果见 CHANGELOG.md；运行代码的最新期望版本以 migrations.ExpectedVersion 为准。
 
 ## 数据关系

@@ -24,6 +24,7 @@ type Actor struct {
 }
 
 type CreateInput struct {
+	ContestID  uint64  `json:"contest_id,omitempty"`
 	ProblemID  uint64  `json:"problem_id"`
 	Language   string  `json:"language"`
 	SourceCode string  `json:"source_code"`
