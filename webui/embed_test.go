@@ -3,11 +3,32 @@ package webui
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"biue/internal/httpx"
 )
+
+func TestVersionedAssetsServeEmbeddedContent(t *testing.T) {
+	handler, err := Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "/contests", nil))
+	urls := regexp.MustCompile(`/static/[a-z.]+\?v=[a-f0-9]{64}`).FindAllString(w.Body.String(), -1)
+	if len(urls) != 3 {
+		t.Fatalf("missing versioned CSS/app/contest assets: %v", urls)
+	}
+	for _, asset := range urls {
+		r := httptest.NewRecorder()
+		handler.ServeHTTP(r, httptest.NewRequest("GET", asset, nil))
+		if r.Code != 200 || r.Body.Len() == 0 {
+			t.Fatalf("versioned asset unavailable: %s", asset)
+		}
+	}
+}
 
 func TestPagesAndEmbeddedAssets(t *testing.T) {
 	handler, err := Handler()

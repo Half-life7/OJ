@@ -38,6 +38,11 @@ func reply(c *gin.Context, data any, err error) {
 			status = 409
 			message = "状态已变化或存在重复记录，请刷新后重试"
 		}
+		var fields *FieldError
+		if errors.As(err, &fields) {
+			data = gin.H{"fields": fields.Fields}
+			message = fields.Error()
+		}
 		c.Abort()
 	}
 	code := 0

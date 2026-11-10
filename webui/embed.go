@@ -3,6 +3,7 @@ package webui
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"html/template"
@@ -25,7 +26,23 @@ type page struct {
 // Handler returns the MPA pages and their local assets. API routes belong to
 // the application router; unknown page paths remain 404.
 func Handler() (http.Handler, error) {
-	templates, err := template.ParseFS(files, "templates/*.html")
+	entries, err := files.ReadDir("static")
+	if err != nil {
+		return nil, fmt.Errorf("list embedded assets: %w", err)
+	}
+	urls := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := files.ReadFile("static/" + entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("read embedded asset: %w", err)
+		}
+		name := "/static/" + entry.Name()
+		urls[name] = fmt.Sprintf("%s?v=%x", name, sha256.Sum256(data))
+	}
+	templates, err := template.New("").Funcs(template.FuncMap{"asset": func(name string) string { return urls[name] }}).ParseFS(files, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse page templates: %w", err)
 	}

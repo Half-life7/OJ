@@ -6,14 +6,14 @@
   <meta name="csp-nonce" content="{{.StyleNonce}}">
   <meta name="description" content="Biue OJ 在线评测与竞赛系统。管理你的账号与身份，准备下一次编程挑战。">
   <title>{{.Title}} · Biue OJ</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/app.js" defer></script>
-  {{if eq .Name "operations"}}<script src="/static/operations.js" defer></script>{{end}}
-  {{if or (eq .Name "community") (eq .Name "rankings") (eq .Name "problem") (eq .Name "problems")}}<script src="/static/community.js" defer></script>{{end}}
-  {{if or (eq .Name "contests") (eq .Name "identities")}}<script src="/static/contests.js" defer></script>{{end}}
-  {{if or (eq .Name "problems") (eq .Name "problem") (eq .Name "admin-problems")}}<script src="/static/problems.js" defer></script>{{end}}
-  {{if eq .Name "problem"}}<script src="/static/editor.js" defer></script>{{end}}
-  {{if or (eq .Name "problem") (eq .Name "submissions") (eq .Name "submission")}}<script src="/static/submissions.js" defer></script>{{end}}
+  <link rel="stylesheet" href="{{asset "/static/app.css"}}">
+  <script src="{{asset "/static/app.js"}}" defer></script>
+  {{if eq .Name "operations"}}<script src="{{asset "/static/operations.js"}}" defer></script>{{end}}
+  {{if or (eq .Name "community") (eq .Name "rankings") (eq .Name "problem") (eq .Name "problems")}}<script src="{{asset "/static/community.js"}}" defer></script>{{end}}
+  {{if or (eq .Name "contests") (eq .Name "identities")}}<script src="{{asset "/static/contests.js"}}" defer></script>{{end}}
+  {{if or (eq .Name "problems") (eq .Name "problem") (eq .Name "admin-problems")}}<script src="{{asset "/static/problems.js"}}" defer></script>{{end}}
+  {{if eq .Name "problem"}}<script src="{{asset "/static/editor.js"}}" defer></script>{{end}}
+  {{if or (eq .Name "problem") (eq .Name "submissions") (eq .Name "submission")}}<script src="{{asset "/static/submissions.js"}}" defer></script>{{end}}
 </head>
 <body data-page="{{.Name}}">
   <a class="skip-link" href="#main">跳到主要内容</a>
@@ -26,9 +26,13 @@
         <a href="/" {{if eq .Name "home"}}aria-current="page"{{end}}>首页</a>
         <a href="/problems" {{if or (eq .Name "problems") (eq .Name "problem")}}aria-current="page"{{end}}>题库</a>
         <a href="/submissions" {{if or (eq .Name "submissions") (eq .Name "submission")}}aria-current="page"{{end}}>我的提交</a>
-        <a href="/me" {{if eq .Name "me"}}aria-current="page"{{end}}>个人中心</a>
-        <a href="/login" {{if eq .Name "login"}}aria-current="page"{{end}}>登录</a>
-        <a class="nav-register" href="/register" {{if eq .Name "register"}}aria-current="page"{{end}}>创建账号 <span aria-hidden="true">↗</span></a>
+        <span id="nav-session-state" role="status">正在读取账号…</span>
+        <a data-auth="member" hidden href="/me" {{if eq .Name "me"}}aria-current="page"{{end}}>个人中心 · <span id="nav-username"></span></a>
+        <a data-auth="admin" hidden href="/admin">管理后台</a>
+        <a data-auth="admin" hidden href="/admin/problems">题目管理</a>
+        <button id="nav-logout" data-auth="member" hidden type="button">退出登录</button>
+        <a data-auth="guest" hidden href="/login" {{if eq .Name "login"}}aria-current="page"{{end}}>登录</a>
+        <a data-auth="guest" hidden class="nav-register" href="/register" {{if eq .Name "register"}}aria-current="page"{{end}}>创建账号 <span aria-hidden="true">↗</span></a>
       </nav>
     </div>
   </header>
@@ -39,12 +43,12 @@
       <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> BIUE ONLINE JUDGE</p>
       <h1>每一步练习，<br>都从这里开始。</h1>
       <p class="hero-description">为日常编程练习与校内竞赛准备的在线评测平台。<br class="desktop-break">先创建你的账号，建立属于自己的学习身份。</p>
-      <div class="hero-actions"><a class="button primary" href="/register">创建永久账号 <span aria-hidden="true">→</span></a><a class="button secondary" href="/login">已有账号，去登录</a></div>
+      <div class="hero-actions"><a data-auth="guest" hidden class="button primary" href="/register">创建永久账号 <span aria-hidden="true">→</span></a><a data-auth="guest" hidden class="button secondary" href="/login">已有账号，去登录</a><a data-auth="member" hidden class="button primary" href="/problems">开始练习</a><a data-auth="member" hidden class="button secondary" href="/contests">进入比赛中心</a></div>
       <p class="quiet-note">开放注册 · 学号选填 · 校外用户也可加入</p>
       <div class="hero-decoration" aria-hidden="true"><span>{</span><div><i></i><i></i><i></i><i></i></div><span>}</span></div>
     </section>
     <section class="home-grid" aria-label="账号服务">
-      <article class="info-card"><span class="card-number">01 / ACCOUNT</span><h2>一个独立的账号 ID</h2><p>使用账号 ID 登录，它与你的学号分开管理。没有学号，也可以创建永久账号。</p><a class="text-link" href="/register">开始注册 <span aria-hidden="true">→</span></a></article>
+      <article class="info-card"><span class="card-number">01 / ACCOUNT</span><h2>一个独立的账号 ID</h2><p>使用账号 ID 登录，它与你的学号分开管理。没有学号，也可以创建永久账号。</p><a data-auth="guest" hidden class="text-link" href="/register">开始注册 <span aria-hidden="true">→</span></a><a data-auth="member" hidden class="text-link" href="/me">查看我的账号 →</a></article>
       <article class="info-card"><span class="card-number">02 / IDENTITY</span><h2>清晰管理身份信息</h2><p>在个人中心查看账号与学号状态。填写的学号需审核后才成为已验证身份信息。</p><a class="text-link" href="/me">打开个人中心 <span aria-hidden="true">→</span></a></article>
       <article class="info-card release-card"><span class="release-badge">当前版本</span><h2>从题库开始探索</h2><p>浏览已公开的题目，查看题面、样例与资源限制。自动评测与竞赛功能将在后续阶段开放。</p><a class="text-link" href="/problems">浏览题库 <span aria-hidden="true">→</span></a></article>
     </section>

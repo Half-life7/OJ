@@ -7,9 +7,15 @@
 <label>比赛名称<input name="title" required maxlength="200"></label>
 <label>计分模式<select name="scoring_mode"><option>OI</option><option>ACM</option><option>IOI</option></select></label>
 <label>报名方式<select name="enrollment_policy"><option value="open">自由报名</option><option value="admin_add">管理员添加</option></select></label>
-<label>开始时间<input name="starts_at" type="datetime-local" required></label><label>结束时间<input name="ends_at" type="datetime-local" required></label>
+<p id="contest-time-help" class="field-help"></p>
+<label>开始时间<input name="starts_at" type="datetime-local" required aria-describedby="contest-time-help"></label>
+<label>结束时间设置<select name="end_mode"><option value="duration">按持续时间计算</option><option value="manual">手动指定结束时间</option></select></label>
+<label id="contest-duration-label">比赛持续时间（分钟）<input name="duration_minutes" type="number" min="1" max="43200" step="1" value="120" required><span class="field-help">按实际经过的时间计算，最长 43200 分钟（30 天）。</span></label>
+<label>结束时间<input name="ends_at" type="datetime-local" required readonly></label>
+<p id="contest-end-preview" role="status"></p>
+<p id="contest-form-error" class="field-error" role="alert" hidden></p>
 <label><input name="approval_required" type="checkbox">报名需要审核</label><label><input name="team_mode" type="checkbox">团队赛（管理员组队）</label>
-<button class="button primary">创建比赛</button></form></section>
+<button class="button primary" type="submit">创建比赛</button></form></section>
 <section id="contest-detail" hidden>
 <div class="profile-card"><h2 id="contest-title"></h2><p id="contest-info"></p><button id="contest-enroll" class="button primary" type="button">报名</button> <button id="contest-refresh" class="button secondary" type="button">刷新成绩</button></div>
 <section class="profile-card"><h2>比赛题目</h2><div id="contest-problems"></div></section>

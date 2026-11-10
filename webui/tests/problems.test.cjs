@@ -198,6 +198,28 @@ test("admin edits carry the loaded revision and CSRF token; conflicts preserve e
   assert.equal(ui.elements.get("problem-editor-fields").disabled, false);
 });
 
+test("reverting a dirty statement re-enables upload without an unnecessary save", async () => {
+  const ui = boot("admin-problems", async (url) => {
+    if (url === "/api/users/me") return { data: { global_role: "super_admin" } };
+    if (url.startsWith("/api/admin/problems?")) return { data: { items: [sample], page: 1, limit: 20, total: 1 } };
+    if (url === "/api/admin/problems/7") return { data: sample };
+    return { data: { items: [], page: 1, limit: 20, total: 0 } };
+  });
+  await settle();
+  assert.match(ui.elements.get("problem-upload-state").textContent, /先创建/);
+  const button = ui.elements.get("admin-problem-list").querySelector("button");
+  await button.trigger("click"); await settle();
+  ui.elements.get("edit-title").value = "changed";
+  ui.elements.get("problem-editor-form").trigger("input");
+  assert.match(ui.elements.get("problem-upload-state").textContent, /未保存/);
+  assert.equal(ui.elements.get("problem-upload-fields").disabled, true);
+  ui.elements.get("edit-title").value = sample.title;
+  ui.elements.get("problem-editor-form").trigger("input");
+  assert.equal(ui.elements.get("problem-upload-fields").disabled, false);
+  assert.match(ui.elements.get("problem-upload-state").textContent, /可以选择/);
+  assert.equal(ui.calls.some(call => call.method !== "GET"), false);
+});
+
 test("test data upload sends multipart fields with the current revision", async () => {
   const ui = boot("admin-problems", async (url, options) => {
     if (url === "/api/users/me") return { data: { global_role: "super_admin" } };

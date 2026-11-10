@@ -211,10 +211,18 @@
   let listEpoch = 0;
   let editorEpoch = 0;
   let versionEpoch = 0;
+  let savedEditor = "";
+  let adminAllowed = false;
+
+  function editorSnapshot() {
+    return JSON.stringify([...editorFields, "tags", "problem_type", "checker_mode", "checker_source"].map(name => editor.elements.namedItem(name)?.value || ""));
+  }
 
   function updateControls() {
-    byID("problem-editor-fields").disabled = mutationPending;
-    byID("problem-upload-fields").disabled = mutationPending || !selected || dirty;
+    byID("problem-editor-fields").disabled = mutationPending || !adminAllowed;
+    byID("problem-upload-fields").disabled = !adminAllowed || mutationPending || !selected || dirty;
+    byID("problem-upload-state").textContent = !adminAllowed ? "需要有效的超级管理员会话才能上传。" : mutationPending ? "正在处理操作，请稍候…" : !selected ? "请先创建题目，或从列表选择已保存的题目。" : dirty ? "题面有未保存修改。请先保存，或重新加载以放弃修改。" : "题面已保存，可以选择测试数据 ZIP 并上传。";
+    byID("problem-save-for-upload").hidden = !adminAllowed || mutationPending || (!!selected && !dirty);
     byID("problem-new").disabled = mutationPending;
     byID("problem-reload").disabled = mutationPending;
     for (const button of byID("admin-problem-list").querySelectorAll("button")) button.disabled = mutationPending;
@@ -223,8 +231,15 @@
   function adminError(error, target) {
     message(target, error.message);
     if (error.status === 401) {
+      adminAllowed = false;
+      updateControls();
       byID("problem-admin").hidden = true;
       state("登录会话已失效，请重新登录后再管理题目。", false, false, true);
+    } else if (error.status === 403) {
+      adminAllowed = false;
+      updateControls();
+      byID("problem-admin").hidden = true;
+      state("当前操作未获授权，请重新验证管理权限。", false, true);
     }
   }
 
@@ -252,6 +267,7 @@
     message("problem-upload-message", "");
     message("problem-versions-message", "");
     byID("problem-versions-retry").hidden = true;
+    savedEditor = editorSnapshot();
     updateControls();
   }
 
@@ -392,8 +408,10 @@
     return result;
   }
 
-  editor.addEventListener("input", () => { dirty = true; updateControls(); });
-  editor.addEventListener("change", () => { dirty = true; updateControls(); });
+  function editorChanged() { dirty = editorSnapshot() !== savedEditor; updateControls(); }
+  editor.addEventListener("input", editorChanged);
+  editor.addEventListener("change", editorChanged);
+  byID("problem-save-for-upload").addEventListener("click", () => editor.requestSubmit());
   editor.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (mutationPending) return;
@@ -485,6 +503,8 @@
   });
 
   async function initializeAdmin() {
+    adminAllowed = false;
+    updateControls();
     state("正在验证管理权限…", true);
     byID("problem-admin").hidden = true;
     try {
@@ -493,7 +513,8 @@
         state("当前账号没有题目管理权限。请使用超级管理员账号登录。");
         return;
       }
-      fillEditor(null);
+      adminAllowed = true;
+      if (!savedEditor) fillEditor(null);
       byID("problem-state").hidden = true;
       byID("problem-admin").hidden = false;
       await loadList(1);

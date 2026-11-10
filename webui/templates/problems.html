@@ -3,7 +3,7 @@
 {{end}}
 
 {{define "problems-list"}}
-<section class="profile-heading"><div><p class="eyebrow">PROBLEM LIBRARY</p><h1>题库</h1><p>发现下一道值得思考的题目。</p></div></section>
+<section class="profile-heading"><div><p class="eyebrow">PROBLEM LIBRARY</p><h1>题库</h1><p>发现下一道值得思考的题目。</p></div><div data-auth="admin" hidden><a class="button primary" href="/admin/problems?new=1">＋ 创建题目</a> <a class="button secondary" href="/admin/problems">管理题目</a></div></section>
 <form id="problem-filter-form" class="problem-filters" role="search" aria-label="筛选题目">
 <div><label for="problem-category">分类</label><input id="problem-category" name="category" maxlength="23" placeholder="例如 graph"></div>
   <div><label for="problem-query">标题或题目 ID</label><input id="problem-query" name="q" maxlength="200" placeholder="搜索题目"></div>
@@ -70,7 +70,9 @@
     </section>
     <aside class="problem-data-panel">
       <section class="profile-card"><div class="card-heading"><span class="card-number">TEST DATA</span><h2>上传测试数据</h2><p>每次成功上传都会生成新版本，旧版本会保留。请先保存题面，再上传数据。</p></div>
-        <form id="problem-upload-form"><fieldset id="problem-upload-fields" disabled>
+        <p id="problem-upload-state" role="status">请先创建或选择已保存的题目。</p>
+        <button id="problem-save-for-upload" type="button" class="button secondary" hidden>保存题面后启用上传</button>
+        <form id="problem-upload-form"><fieldset id="problem-upload-fields" disabled aria-describedby="problem-upload-state">
           <label for="data-archive">测试数据 ZIP</label><input id="data-archive" name="archive" type="file" accept=".zip,application/zip" required aria-describedby="archive-help"><p id="archive-help" class="field-help">最多 32 MiB，根目录中成对放置 1.in / 1.out 等文件。最多 512 个测试点。</p>
           <label for="data-scores">测试点分值</label><textarea id="data-scores" name="scores" rows="6" required spellcheck="false" placeholder='{"1":40,"2":60}' aria-describedby="scores-help"></textarea><p id="scores-help" class="field-help">JSON 对象，键与文件中的测试点 ID 完全一致，分值为非负整数且总分大于零。</p>
           <button class="button primary full-width" type="submit">上传并发布新版本</button>

@@ -1353,3 +1353,9 @@ body[data-page="contests"] input[type="checkbox"] { display: inline-block; width
 .learning-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
 .learning-prose { overflow-wrap: anywhere; }
 .learning-prose pre { overflow-x: auto; padding: 1rem; background: var(--surface, #f3f6f5); }
+nav { flex-wrap: wrap; justify-content: flex-end; gap: 12px 20px; }
+nav button { background: transparent; color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: .4rem .6rem; cursor: pointer; font: inherit; }
+@media(max-width:680px) { nav { justify-content: flex-start; } }
+#nav-session-state { font-size: .8rem; }
+[aria-invalid="true"] { border-color: var(--error); }
+.field-error { color: var(--error); margin: .25rem 0 .75rem; }

@@ -9,6 +9,63 @@
   }
 
   let csrfToken = "";
+  let sessionEpoch = 0;
+  let sessionRequest = null;
+
+  function renderSession(user, message = "") {
+    const member = !!user;
+    const admin = member && user.account_type === "permanent" && user.global_role === "super_admin";
+    for (const item of document.querySelectorAll("[data-auth]")) {
+      item.hidden = !({ guest: !member && !message, member, admin }[item.dataset.auth]);
+    }
+    document.getElementById("nav-username").textContent = user?.username || "";
+    const state = document.getElementById("nav-session-state");
+    state.textContent = message;
+    state.hidden = !message;
+  }
+
+  async function refreshSession(force = false) {
+    if (sessionRequest && force !== true) return sessionRequest;
+    const epoch = ++sessionEpoch;
+    const pending = request("/api/users/me").then(user => {
+      if (epoch === sessionEpoch) renderSession(user);
+    }).catch(error => {
+      if (epoch === sessionEpoch) renderSession(null, error.status === 401 ? "" : "账号读取失败，切回页面可重试");
+    }).finally(() => { if (sessionRequest === pending) sessionRequest = null; });
+    sessionRequest = pending;
+    return pending;
+  }
+
+  function announceSessionChange() {
+    // Only an invalidation signal is stored, never credentials or account data.
+    try { localStorage.setItem("biue-session-changed", Date.now() + ":" + Math.random()); } catch {}
+  }
+
+  async function logout(button, errorTarget) {
+    button.disabled = true;
+    try {
+      await write("/api/auth/logout");
+      csrfToken = "";
+      ++sessionEpoch;
+      renderSession(null);
+      announceSessionChange();
+      window.location.assign("/login?logged_out=1");
+    } catch (error) {
+      if (errorTarget) showMessage(errorTarget, error.message);
+      else {
+        const state = document.getElementById("nav-session-state");
+        state.textContent = error.message;
+        state.hidden = false;
+      }
+    } finally { button.disabled = false; }
+  }
+
+  document.getElementById("nav-logout").addEventListener("click", event => logout(event.currentTarget));
+  window.addEventListener("storage", event => { if (event.key === "biue-session-changed") { csrfToken = ""; refreshSession(true); } });
+  window.addEventListener("pageshow", () => refreshSession(true));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshSession(true); });
+  window.setInterval(() => { if (!document.hidden) refreshSession(); }, 60000);
+  refreshSession();
 
   async function request(path, method = "GET", data) {
     const controller = new AbortController();
@@ -32,6 +89,7 @@
         throw new APIError("服务暂时无法响应，请稍后重试。", response.status);
       }
       if (!response.ok || result.code !== 0) {
+        if (response.status === 401 && path !== "/api/users/me") { ++sessionEpoch; renderSession(null); }
         if (response.status === 403) csrfToken = "";
         throw new APIError(result.message || "操作未完成，请稍后重试。", response.status);
       }
@@ -111,12 +169,14 @@
     data.username = data.username.trim();
     await write("/api/auth/login", data);
     csrfToken = "";
+    announceSessionChange();
     window.location.assign("/me");
   });
 
   bindForm("password-form", "password-message", async (data) => {
     await write("/api/auth/password", data);
     csrfToken = "";
+    announceSessionChange();
     window.location.assign("/login?password_changed=1");
   });
 
@@ -169,19 +229,7 @@
 
   if (document.body.dataset.page === "me") {
     document.getElementById("profile-retry").addEventListener("click", loadProfile);
-    document.getElementById("logout-button").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      try {
-        await write("/api/auth/logout");
-        csrfToken = "";
-        window.location.assign("/login?logged_out=1");
-      } catch (error) {
-        showMessage(document.getElementById("logout-message"), error.message);
-      } finally {
-        button.disabled = false;
-      }
-    });
+    document.getElementById("logout-button").addEventListener("click", event => logout(event.currentTarget, document.getElementById("logout-message")));
     loadProfile();
   }
 })();

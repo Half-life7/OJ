@@ -120,15 +120,43 @@ func (s *Service) List(ctx context.Context, after uint64) ([]Contest, error) {
 	err := s.db.SelectContext(ctx, &items, `SELECT `+columns+` FROM contests WHERE id>? ORDER BY id LIMIT 100`, after)
 	return items, storageError(err)
 }
-func validContest(c Contest, now time.Time) bool {
-	return clean(c.Title, 200) && (c.Mode == "OI" || c.Mode == "ACM" || c.Mode == "IOI") && (c.Policy == "open" || c.Policy == "admin_add") && c.Start.After(now) && c.End.After(c.Start) && c.End.Sub(c.Start) <= 30*24*time.Hour && c.Start.Year() <= 9999 && c.End.Year() <= 9999
+
+type FieldError struct{ Fields map[string]string }
+
+func (e *FieldError) Error() string { return "请检查标记的比赛字段" }
+func (e *FieldError) Unwrap() error { return ErrInvalid }
+
+func validateContest(c Contest, now time.Time) error {
+	fields := map[string]string{}
+	if !clean(c.Title, 200) {
+		fields["title"] = "比赛名称需为 1～200 个字符，且不能含控制字符"
+	}
+	if c.Mode != "OI" && c.Mode != "ACM" && c.Mode != "IOI" {
+		fields["scoring_mode"] = "请选择 OI、ACM 或 IOI 计分模式"
+	}
+	if c.Policy != "open" && c.Policy != "admin_add" {
+		fields["enrollment_policy"] = "请选择有效的报名方式"
+	}
+	if c.Start.IsZero() || !c.Start.After(now) || c.Start.Year() > 9999 {
+		fields["starts_at"] = "开始时间必须晚于服务器当前时间，请至少预留几分钟"
+	}
+	if c.End.IsZero() || !c.End.After(c.Start) || c.End.Year() > 9999 {
+		fields["ends_at"] = "结束时间必须晚于开始时间"
+	} else if c.End.Sub(c.Start) > 30*24*time.Hour {
+		fields["ends_at"] = "比赛持续时间不能超过 30 天"
+	}
+	if len(fields) > 0 {
+		return &FieldError{Fields: fields}
+	}
+	return nil
 }
 func (s *Service) Save(ctx context.Context, a auth.User, c Contest) (uint64, error) {
 	var id uint64
 	err := s.write(ctx, a, func(tx *sqlx.Tx, a auth.User) error {
 		now := s.now().UTC()
-		if !validContest(c, now) {
-			return ErrInvalid
+		c.Title = strings.TrimSpace(c.Title)
+		if err := validateContest(c, now); err != nil {
+			return err
 		}
 		if c.ID == 0 {
 			if a.GlobalRole != "super_admin" || a.AccountType != "permanent" {
