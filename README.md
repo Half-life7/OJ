@@ -6,6 +6,8 @@
 
 Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。四语言镜像已实际构建，amd64 全链路及故障恢复通过；arm64 已交叉编译并通过仿真启动，原生 arm64/生产整机验收留在后续部署批次。
 
+大陆服务器安装可用 `sudo OJ_NETWORK_PROFILE=cn OJ_PUBLIC_URL=http://你的服务器IP bash deploy.sh install`，同步切换 Docker/Go/Alpine 下载源；也支持自定义镜像仓库、完整镜像包导出和离线安装。已有实例使用 `sudo OJ_NETWORK_PROFILE=cn bash deploy.sh update` 切换，详见[部署与运维](docs/OPERATIONS.md#中国大陆网络与镜像拉取失败)。
+
 ## 当前功能
 
 - SSE 提交状态、隔离 SPJ、输出型题目、JavaScript 判题、保留历史的批量重判和三个全局榜的周/月维度，配置、权限及限制见 [批次 6](docs/EXTENSIONS.md)。

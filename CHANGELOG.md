@@ -2,6 +2,14 @@
 
 每批记录目标、实际变更、数据库/API/权限影响、验证命令与结果、遗留项。状态只使用：进行中、已完成、待验证。
 
+## 2026-11-11 — 大陆网络部署下载源与离线镜像（已完成）
+
+- 定位到 Docker Hub 基础镜像和构建阶段 Go/Alpine 下载源均固定直连官方地址。新增 `OJ_NETWORK_PROFILE=cn`，项目内切换 DaoCloud Docker 镜像前缀、goproxy.cn 和清华 Alpine/Docker CE APT 源；支持自定义仓库及依赖源，保留固定镜像版本、Go 校验和原有业务凭据，不修改全局 Docker daemon 配置。
+- 缺失基础镜像逐个预拉取、有限次数重试与单次超时，构建串行执行。更新在停业务前准备镜像；启动阶段禁止隐式拉取/构建。新增 `export-images` 完整九镜像包及 SHA256 导出、`OJ_SKIP_BUILD=1` 本地镜像安装/升级，缺镜像在停业务前报错。导出不覆盖已有文件，使用私有暂存目录和原子不覆盖发布。
+- `python tools/check_image_sources.py`、`python tools/check_maintenance.py`、`python tools/check_deploy_guards.py` 通过；`tools/check_deploy_network.sh` 使用真实 Compose 配置解析与模拟仓库故障，验证全部镜像/构建参数、源配置持久化、旧凭据保留、有限重试、无网络安装/更新/导出和缺镜像提前失败。
+- 实际经 cn 代理拉取全部九个基础镜像，并使用 cn 镜像/Go/Alpine 源构建应用、Python 沙箱和 Nginx 独立测试标签。独立 `biue-network-check-*` 项目在控制器禁网条件下完成本地镜像 install/update/restore/uninstall，迁移 9 与全部常驻服务健康检查通过，卸载保留配置和备份；未改动原运行项目。
+- 数据库/API/业务权限无变更。未在用户的大陆服务器实测速度；公共镜像代理的白名单、限流和可用性限制仍适用，提供自定义仓库与离线方式。使用步骤见 docs/OPERATIONS.md，原生平台待验项沿用既有约定。
+
 ## 2026-11-10 — 批次 6 P2 扩展（已完成）
 
 - 迁移 9 增加 javascript/text 语言、榜单 period 主键和重判幂等回执。题面不可变快照保存题型和 Python checker，公开题库与比赛题面隐藏 checker_source；修改后的配置只影响新版本，原提交/重判保持原版本。

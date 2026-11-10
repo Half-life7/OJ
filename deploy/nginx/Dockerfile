@@ -1,4 +1,5 @@
-FROM nginx:1.30.6-alpine
+ARG NGINX_IMAGE=nginx:1.30.6-alpine
+FROM ${NGINX_IMAGE}
 COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 USER 101:101
 EXPOSE 8080

@@ -41,6 +41,66 @@ sudo bash deploy.sh logs
 
 生产 Compose 使用独立 bind 目录保存 mysql、redis、problem-data、runner-data、uploads、config、logs、backups，数据和源码分离；语言与应用镜像版本固定。业务容器均不挂 Docker Socket，只有 Runner 挂载；Redis 初始化临时容器只增加 CHOWN 权限，运行时仍 cap-drop ALL。所有常驻服务均有健康检查和 unless-stopped 策略。
 
+### 中国大陆网络与镜像拉取失败
+
+首次安装，或上次因下载失败中断后重试：
+
+```bash
+sudo OJ_NETWORK_PROFILE=cn OJ_PUBLIC_URL=http://你的服务器IP bash deploy.sh install
+```
+
+已经运行的实例，在更新源码后切换源并升级：
+
+```bash
+sudo OJ_NETWORK_PROFILE=cn bash deploy.sh update
+```
+
+`cn` 同时配置下面三条下载路径，保持原有固定版本号和 Go 校验机制。配置保存在数据目录 `config/.env`，后续命令会沿用；重复 install 或切换源不会重置账号、数据库密码或业务数据。已有自定义数据目录/项目名时仍需传入相同的 `OJ_DATA_DIR`/`OJ_PROJECT`。
+
+| 下载内容 | cn 配置 | 自定义首次安装/更新参数 |
+| --- | --- | --- |
+| 全部 Docker Hub 基础镜像，包括 MySQL/Redis 和五种判题语言 | `m.daocloud.io/docker.io/library` | `OJ_DOCKERHUB_LIBRARY=仓库域名/命名空间` |
+| Go 模块 | `https://goproxy.cn` | `OJ_GO_PROXY=https://你的模块代理` |
+| Alpine 软件包 | `https://mirrors.tuna.tsinghua.edu.cn/alpine` | `OJ_ALPINE_MIRROR=https://你的镜像站/alpine` |
+
+Docker 镜像前缀采用 [DaoCloud 文档中的前缀映射方式](https://github.com/DaoCloud/public-image-mirror)，例如 `mysql:8.0.46` 对应 `m.daocloud.io/docker.io/library/mysql:8.0.46`。[Go 模块代理](https://goproxy.cn/)保留校验数据库验证；[Alpine 镜像](https://mirrors.tuna.tsinghua.edu.cn/help/alpine/)保留发行版分支与软件包签名。公共 Docker 镜像代理有白名单、限流与缓存限制，不能保证每台服务器都可用；可替换为本单位或云厂商仓库，仓库中需事先同步所有固定版本镜像。
+
+例如，按 `mysql`、`redis`、`golang`、`alpine`、`gcc`、`python`、`eclipse-temurin`、`node`、`nginx` 的原名和固定标签同步到 `registry.example.edu/oj` 后：
+
+```bash
+sudo OJ_NETWORK_PROFILE=cn \
+  OJ_DOCKERHUB_LIBRARY=registry.example.edu/oj \
+  bash deploy.sh install
+```
+
+前缀不带 `https://` 或末尾镜像名；私有仓库先用 `sudo docker login registry.example.edu` 登录。同一次命令中自定义参数优先于 profile。恢复官方源使用 `OJ_NETWORK_PROFILE=official` 执行 install/update。不传 profile 或自定义参数时保留已存配置；旧版本配置自动补齐官方默认值。
+
+缺失的基础镜像会逐个预拉取，缓存命中则复用。每张镜像默认最多 3 次、每次最多 600 秒；可通过 `OJ_PULL_RETRIES` 和 `OJ_PULL_TIMEOUT`（秒）调整。构建串行进行以减少小服务器的并发下载和内存压力；更新时下载/构建检查先于停止业务和备份，镜像下载失败会指出具体引用。脚本不修改 Docker daemon 的全局镜像源配置。
+
+install 自动安装 Docker 时，`cn` 还会使用[清华 Docker CE APT 镜像](https://mirrors.tuna.tsinghua.edu.cn/help/docker-ce/)，可用 `OJ_DOCKER_APT_MIRROR=https://你的镜像站/docker-ce` 指定替代地址。此参数只影响 Docker 安装仓库；Ubuntu/Debian 系统 APT 源仍沿用服务器现有设置。如果卡在系统 `apt-get update`，需先配置服务器的系统软件源。
+
+### 离线镜像安装与更新
+
+服务器完全无法访问镜像仓库时，在**已安装同一代码版本、相同 CPU 架构**的联网 Linux 机器上导出完整的九个运行镜像（应用、Nginx、五语言、MySQL、Redis）：
+
+```bash
+sudo bash deploy.sh export-images /tmp/biue-images.tar
+```
+
+生成 `biue-images.tar` 和 `biue-images.tar.sha256`，保留实际使用的完整镜像标签。包只含镜像，不含部署配置或业务数据。输出必须位于源码目录之外，已有同名文件不会覆盖。将两份文件与同一版本源码传到目标服务器，在镜像包所在目录执行：
+
+```bash
+sha256sum -c biue-images.tar.sha256 && sudo docker load --input biue-images.tar
+cd /你的源码路径/OJ
+# 若导出机器使用 cn 配置，首次安装也指定 cn，以匹配 MySQL/Redis 标签：
+sudo OJ_AUTO_INSTALL_DOCKER=0 OJ_NETWORK_PROFILE=cn OJ_SKIP_BUILD=1 \
+  OJ_PUBLIC_URL=http://你的服务器IP bash deploy.sh install
+```
+
+若导出机器使用官方源或自定义仓库，目标机改用相同的 profile/仓库前缀。离线安装前须已有 Docker/Compose 和上文列出的系统工具；脚本不会离线安装这些工具。镜像包和源码须来自可信渠道，SHA256 用于检测传输损坏。
+
+`OJ_SKIP_BUILD=1` 会检查全部运行镜像，缺任何一个立即报错，并禁止启动阶段的拉取和构建。升级时先导入新版本的同架构镜像、更新到匹配源码，然后执行 `sudo OJ_SKIP_BUILD=1 bash deploy.sh update`。此选项每次显式传入，不会永久开启，以免后续升级误用旧镜像。日常 start/restart 同样禁止隐式拉取/构建；若镜像已删除，先重新导入，或执行在线 install/update 重新准备镜像。
+
 ## HTTPS 和内部证书
 
 Runner 内部 HTTPS 在生产配置强制开启，安装生成私有 CA 和带 runner/localhost/127.0.0.1 SAN 的证书，只向 Worker/Runner 挂载所需文件；CA 私钥只存在 root 配置目录，不进入运行容器。应用签名密钥和 Runner 令牌互相独立。
@@ -61,7 +121,7 @@ sudo OJ_BACKUP_KEEP=7 bash deploy.sh prune
 sudo bash deploy.sh uninstall
 ```
 
-update 备份当前数据后构建当前源码并迁移，失败保留备份，不自动强制迁移或删库。语言镜像更新后应重启同宿主使用该标签的 Runner。stop/start/restart 管理全套服务；uninstall 只移除本项目容器/网络，保留数据、配置和备份。
+update 先准备并检查当前源码对应的镜像，再备份数据并迁移，失败保留备份，不自动强制迁移或删库。语言镜像更新后应重启同宿主使用该标签的 Runner。stop/start/restart 管理全套服务；uninstall 只移除本项目容器/网络，保留数据、配置和备份。
 
 backup 停止入口/Web/Worker/dispatcher/Runner，等进程退出后使用 mysqldump 单事务逻辑备份，并归档题目文件、上传目录、Runner journal 和配置；MySQL/Redis 不通过复制运行中目录备份。生成 database.sql.gz、files.tar.gz、SHA256SUMS，校验通过才从 pending 目录原子发布，再恢复服务。OJ_BACKUP_DIR 可指定其他备份目录；备份含密钥，须保护权限和离机副本。
 
@@ -71,6 +131,8 @@ prune 是显式保留操作，默认保留最近 7 份，可配置 1～3650 份�
 
 ## 实际验收与剩余平台项
 
+- 大陆源修订：`tools/check_image_sources.py`、`tools/check_deploy_network.sh` 验证配置迁移/保留凭据、完整镜像清单、代理/构建参数、重试和离线流程；全部九个基础镜像已通过 cn 代理实际拉取，应用、Python 沙箱、Nginx 已通过 cn 源构建。独立 `biue-network-check-*` 项目完成本地镜像安装、更新、恢复和保留数据卸载，所有常驻服务健康。没有在用户的大陆服务器测量下载速度，也未将公共代理可用性视为永久保证。
+
 - 全量 Go test/vet/build/race 及既有 16 项 Node 页面行为检查通过；新增脚本语法与维护 helper 的密钥幂等、归档路径/链接/摘要检查、备份保留策略测试通过。
 - 独立 `biue-batch3` 升级至迁移 8，实际验证账号禁用后会话撤销、恢复后必须重新登录、CSV 冲突/重新核对/重复确认、封榜期间继续真实 Python 判题、冻结与实时成绩分离、历史封榜保留、批量状态、CSV 导出、监控/审计/队列接口。Edge 桌面/手机验收通过，截图在 `.cache/5-admin-desktop.png` 与 `.cache/5-admin-mobile.png`。
 - 在独立 Debian 12 用户空间控制器中，实际执行官方 APT 安装 Docker/Compose、两次 install 和配置摘要比较；没有在控制器手动安装 Go、MySQL 或 Redis，应用运行于专用 Docker 项目。生产 Runner 内部 TLS、四语言真实判题和 OI/ACM/IOI 比赛结算通过。
@@ -79,4 +141,4 @@ prune 是显式保留操作，默认保留最近 7 份，可配置 1～3650 份�
 - 应用（Web/Worker/Runner 共用）、C++17/Go/Python/Java 和 Nginx 自定义镜像均完成 linux/arm64 构建及 QEMU 启动检查；Web 的 `/ready` 连接真实数据库/Redis 通过，各语言解释器/编译器与监督程序成功启动。arm64 测试使用独立标签，不覆盖 amd64 标签；未将 QEMU 结果算成原生 arm64 整机验收。
 - 用户已选择当前没有原生服务器，原生 Ubuntu 22.04/24.04 空机安装、真实宿主机重启、跨真实服务器灾备和原生 arm64 全链路保留为待验。容器测试不代替这些平台项，生产容量/长期压力数据也未据此推断。
 
-自动化入口：`tools/check_operations.py`、`tools/check_operations_browser.cjs`、`tools/check_maintenance.py`、`tools/check_deployment.sh`、`tools/check_production.py`、`tools/check_restore_sessions.py`、`tools/check_https_deployment.sh`、`tools/check_arm64.sh`。部署控制器镜像由 deploy/test/Dockerfile 构建，所有 Docker Socket 测试仅面向显式命名的 biue-deploy5-* 项目，数据位于专用卷；生产 Web/Worker 没有 Socket。详见脚本头部参数和独立环境约束。
+自动化入口：`tools/check_operations.py`、`tools/check_operations_browser.cjs`、`tools/check_maintenance.py`、`tools/check_image_sources.py`、`tools/check_deploy_network.sh`、`tools/check_deployment.sh`、`tools/check_production.py`、`tools/check_restore_sessions.py`、`tools/check_https_deployment.sh`、`tools/check_arm64.sh`。网络回归脚本在 `deploy/test/Dockerfile.cli` 控制器内以 `bash /source/tools/check_deploy_network.sh` 运行，挂载只读源码到 `/source` 和本机 Docker Socket，只让真实 CLI 解析配置，修改服务的命令全部模拟。原部署链路测试仅面向显式命名的 biue-deploy5-* 项目，数据位于专用卷；生产 Web/Worker 没有 Socket。详见脚本头部参数和独立环境约束。

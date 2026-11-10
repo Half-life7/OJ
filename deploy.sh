@@ -8,13 +8,14 @@ PROJECT=${OJ_PROJECT:-biue}
 COMMAND=${1:-help}
 ARCHIVE=${2:-}
 HELPER="$SOURCE_DIR/deploy/maintenance.py"
+IMAGE_HELPER="$SOURCE_DIR/deploy/image_sources.py"
 ENV_FILE="$DATA_DIR/config/.env"
 BACKUP_ROOT=${OJ_BACKUP_DIR:-$DATA_DIR/backups}
 LAST_BACKUP=
 COMPOSE=()
 on_error() { local status=$?; printf '操作失败（%s），业务可能保持停止。检查 %s/logs；恢复前备份：%s\n' "$status" "$DATA_DIR" "${LAST_BACKUP:-无}" >&2; exit "$status"; }
 trap on_error ERR
-help() { printf '用法：sudo bash deploy.sh install|status|logs|stop|start|restart|update|backup|prune|restore BACKUP_DIRECTORY|uninstall\n配置：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TLS_CERT、OJ_TLS_KEY、OJ_BACKUP_DIR。\ninstall 默认自动安装缺失的 Docker/Compose，可用 OJ_AUTO_INSTALL_DOCKER=0 禁止；已有配置不覆盖。卸载保留全部数据。\n'; }
+help() { printf '用法：sudo bash deploy.sh install|status|logs|stop|start|restart|update|backup|prune|restore BACKUP_DIRECTORY|uninstall|export-images FILE.tar\n配置：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TLS_CERT、OJ_TLS_KEY、OJ_BACKUP_DIR。\n大陆网络：OJ_NETWORK_PROFILE=cn；自定义 OJ_DOCKERHUB_LIBRARY、OJ_GO_PROXY、OJ_ALPINE_MIRROR、OJ_DOCKER_APT_MIRROR。\n离线镜像导入后用 OJ_SKIP_BUILD=1 install/update（不构建、不拉取，缺镜像立即报错）。\ninstall 默认自动安装缺失的 Docker/Compose，可用 OJ_AUTO_INSTALL_DOCKER=0 禁止；已有账号配置不覆盖。卸载保留全部数据。\n'; }
 [[ $COMMAND != help ]] || { help; exit 0; }
 [[ $EUID == 0 ]] || { echo '请使用 sudo/root 执行。' >&2; exit 1; }
 [[ $DATA_DIR =~ ^/[A-Za-z0-9_./-]+$ && $DATA_DIR != / && $DATA_DIR != /var && $DATA_DIR != /var/lib && $DATA_DIR != /tmp && $DATA_DIR != *'/../'* && $DATA_DIR != */.. ]] || { echo '数据目录必须为独立的绝对路径。' >&2; exit 1; }
@@ -46,15 +47,21 @@ install_docker() {
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl python3 openssl
   install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
+  local mirror=${OJ_DOCKER_APT_MIRROR:-https://download.docker.com}
+  if [[ ${OJ_NETWORK_PROFILE:-} == cn && -z ${OJ_DOCKER_APT_MIRROR:-} ]]; then mirror=https://mirrors.tuna.tsinghua.edu.cn/docker-ce; fi
+  [[ $mirror =~ ^https://[A-Za-z0-9./:_-]+$ && $mirror != *'/../'* ]] || { echo 'OJ_DOCKER_APT_MIRROR 必须为无凭据的 HTTPS 地址。'; return 1; }
+  mirror=${mirror%/}
+  curl --connect-timeout 15 --max-time 120 --retry 2 -fsSL "$mirror/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
   chmod 0644 /etc/apt/keyrings/docker.asc
-  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/%s %s stable\n' "$(dpkg --print-architecture)" "$ID" "${UBUNTU_CODENAME:-$VERSION_CODENAME}" > /etc/apt/sources.list.d/biue-docker.list
+  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s/linux/%s %s stable\n' "$(dpkg --print-architecture)" "$mirror" "$ID" "${UBUNTU_CODENAME:-$VERSION_CODENAME}" > /etc/apt/sources.list.d/biue-docker.list
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 # os-release is system-owned metadata, never an application env file.
 source /etc/os-release
 [[ $ID == ubuntu || $ID == debian ]] || { echo '自动部署目前支持 Ubuntu 与 Debian。'; exit 1; }
+[[ -z ${OJ_NETWORK_PROFILE:-} || ${OJ_NETWORK_PROFILE} == official || ${OJ_NETWORK_PROFILE} == cn ]] || { echo 'OJ_NETWORK_PROFILE 必须为 official 或 cn。'; exit 1; }
+[[ ${OJ_SKIP_BUILD:-0} == 0 || ${OJ_SKIP_BUILD:-0} == 1 ]] || { echo 'OJ_SKIP_BUILD 必须为 0 或 1。'; exit 1; }
 if [[ $COMMAND == install ]]; then OJ_AUTO_INSTALL_DOCKER=${OJ_AUTO_INSTALL_DOCKER:-1}; fi
 if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then install_docker; fi
 if [[ $COMMAND == install ]] && { ! command -v python3 >/dev/null || ! command -v openssl >/dev/null; }; then
@@ -75,6 +82,7 @@ compose_version=$(docker compose version --short | sed 's/^v//')
 [[ $(printf '2.24.4\n%s\n' "$compose_version" | sort -V | head -n1) == 2.24.4 ]] || { echo '需要 Docker Compose >=2.24.4。'; exit 1; }
 get() { python3 "$HELPER" get "$ENV_FILE" "$1"; }
 configure_compose() {
+  python3 "$IMAGE_HELPER" ensure "$ENV_FILE"
   python3 "$HELPER" validate "$ENV_FILE"
   # The saved configuration is authoritative. An operator's ambient variables
   # must not silently replace persisted database credentials or public ports.
@@ -85,6 +93,66 @@ configure_compose() {
   "${COMPOSE[@]}" config --quiet
 }
 dc() { "${COMPOSE[@]}" "$@"; }
+image_inventory() { dc config --format json | python3 "$IMAGE_HELPER" "$1"; }
+require_runtime_images() {
+  local images image missing=0
+  images=$(image_inventory runtime)
+  while IFS= read -r image; do
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      printf '缺少运行镜像：%s\n' "$image" >&2; missing=1
+    fi
+  done <<< "$images"
+  (( missing == 0 )) || { echo '请导入同架构、同代码版本且包含以上完整标签的镜像包，或取消 OJ_SKIP_BUILD 使用在线构建。'; return 1; }
+}
+prepare_images() {
+  if [[ ${OJ_SKIP_BUILD:-0} == 1 ]]; then
+    echo '使用本地镜像：跳过所有拉取和构建。'
+    require_runtime_images
+    return
+  fi
+  local images image attempt pulled retries=${OJ_PULL_RETRIES:-3} limit=${OJ_PULL_TIMEOUT:-600}
+  [[ $retries =~ ^[1-9][0-9]?$ && $limit =~ ^[1-9][0-9]{0,4}$ ]] || { echo 'OJ_PULL_RETRIES/OJ_PULL_TIMEOUT 必须为正整数（最多 99 次/99999 秒）。'; return 1; }
+  images=$(image_inventory sources)
+  while IFS= read -r image; do
+    docker image inspect "$image" >/dev/null 2>&1 && continue
+    pulled=0
+    for ((attempt=1; attempt<=retries; attempt++)); do
+      printf '预拉取 %s（%s/%s，超时 %ss）\n' "$image" "$attempt" "$retries" "$limit"
+      if timeout --signal=TERM --kill-after=10s "${limit}s" docker pull "$image"; then pulled=1; break; fi
+      if (( attempt < retries )); then sleep 2; fi
+    done
+    if (( ! pulled )); then
+      printf '镜像拉取失败：%s\n可使用 OJ_NETWORK_PROFILE=cn 重试 install/update，或设置 OJ_DOCKERHUB_LIBRARY 为可访问的仓库/命名空间；也可导入离线镜像。详见 docs/OPERATIONS.md。\n' "$image" >&2
+      return 1
+    fi
+  done <<< "$images"
+  # Serial builds reduce concurrent downloads and peak memory on small servers.
+  dc --parallel 1 build
+  require_runtime_images
+}
+export_images() {
+  local destination images image staging filename
+  [[ -n $ARCHIVE && $ARCHIVE == /* && $ARCHIVE != *$'\n'* ]] || { echo 'export-images 需要绝对路径的输出文件。'; return 1; }
+  [[ ! -L $ARCHIVE ]] || { echo '镜像包输出不能是符号链接。'; return 1; }
+  destination=$(realpath -m "$ARCHIVE")
+  case "$destination" in "$SOURCE_DIR"/*) echo '镜像包必须保存在源码之外。'; return 1;; esac
+  [[ ! -e $destination && ! -L $destination && ! -e $destination.sha256 && ! -L $destination.sha256 ]] || { echo '拒绝覆盖已有镜像包或校验文件。'; return 1; }
+  require_runtime_images
+  images=$(image_inventory runtime)
+  local image_args=()
+  while IFS= read -r image; do image_args+=("$image"); done <<< "$images"
+  # A private staging directory and no-clobber hard links also protect exports
+  # to shared /tmp from symlink races. Both paths are on the same filesystem.
+  staging=$(mktemp -d "$destination.pending.XXXXXXXX")
+  filename=$(basename -- "$destination")
+  docker image save --output "$staging/$filename" "${image_args[@]}"
+  (cd -- "$staging" && sha256sum -- "$filename" > "$filename.sha256")
+  ln -T -- "$staging/$filename" "$destination"
+  ln -T -- "$staging/$filename.sha256" "$destination.sha256"
+  rm -- "$staging/$filename" "$staging/$filename.sha256"
+  rmdir -- "$staging"
+  printf '镜像包已导出：%s（仅镜像，不含配置或业务数据；目标机须使用相同镜像源配置和 CPU 架构）\n' "$destination"
+}
 wait_ready() {
   local services=(mysql redis web dispatcher worker runner nginx) started=$SECONDS
   while (( SECONDS-started < ${OJ_HEALTH_TIMEOUT:-300} )); do
@@ -101,7 +169,7 @@ wait_ready() {
   dc ps -a
   echo '服务健康检查超时。'; return 1
 }
-up() { dc up -d mysql redis; dc run --rm migrate migrate up; dc up -d nginx web dispatcher worker; wait_ready; }
+up() { require_runtime_images; dc up -d --no-build --pull never mysql redis; dc run --rm --pull never migrate migrate up; dc up -d --no-build --pull never nginx web dispatcher worker; wait_ready; }
 prepare_files() {
   local dir
   for dir in problem-data runner-data uploads; do install -d -m 0750 -o 10001 -g 10001 "$DATA_DIR/$dir"; done
@@ -131,7 +199,7 @@ prepare_files() {
   fi
   python3 "$HELPER" nginx "$ENV_FILE" "$SOURCE_DIR/deploy/nginx/nginx.conf" "$DATA_DIR/config/nginx.conf"
   chmod 0644 "$DATA_DIR/config/nginx.conf"
-  dc run --rm --no-deps --user 0 --cap-add CHOWN --entrypoint sh redis -c 'chown redis:redis /data'
+  dc run --rm --pull never --no-deps --user 0 --cap-add CHOWN --entrypoint sh redis -c 'chown redis:redis /data'
 }
 quiesce() { dc stop -t 60 nginx web worker dispatcher runner; }
 backup() {
@@ -156,6 +224,7 @@ case "$COMMAND" in
     memory_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
     (( memory_kb >= ${OJ_MIN_MEMORY_KB:-2097152} )) || { echo '可用内存不足（至少 2 GiB）。'; exit 1; }
     python3 "$HELPER" generate "$ENV_FILE" "$DATA_DIR" "$(stat -c '%g' /var/run/docker.sock)"
+    python3 "$IMAGE_HELPER" configure "$ENV_FILE"
     configure_compose
     # Docker checks host binding atomically when creating the ingress service.
     # Report existing foreign port listeners before expensive image builds.
@@ -164,33 +233,35 @@ case "$COMMAND" in
         [[ -z $(ss -Hln sport = ":$port") ]] || { echo "入口端口 $port 已被占用。"; exit 1; }
       done
     fi
-    dc build
+    prepare_images
     prepare_files
-    dc up -d mysql redis
-    dc run --rm migrate migrate up
+    dc up -d --no-build --pull never mysql redis
+    dc run --rm --pull never migrate migrate up
     if [[ ! -f $DATA_DIR/config/admin-initialized ]]; then
       if [[ -z ${OJ_ADMIN_PASSWORD:-} ]]; then
         [[ -t 0 ]] || { echo '非交互安装请通过 OJ_ADMIN_PASSWORD 环境变量提供初始密码。'; exit 1; }
         read -rs -p '设置初始管理员密码（不回显）：' OJ_ADMIN_PASSWORD; printf '\n'
       fi
       export OJ_ADMIN_PASSWORD
-      dc run --rm -e OJ_ADMIN_PASSWORD migrate admin-init --username "${OJ_ADMIN_USERNAME:-admin}"
+      dc run --rm --pull never -e OJ_ADMIN_PASSWORD migrate admin-init --username "${OJ_ADMIN_USERNAME:-admin}"
       unset OJ_ADMIN_PASSWORD
       touch "$DATA_DIR/config/admin-initialized"
     fi
     up
     printf '安装完成：%s\n账号：%s（密码已通过安全输入设置）\n后续：sudo bash deploy.sh status / backup / update\n' "$(get PUBLIC_URL)" "${OJ_ADMIN_USERNAME:-admin}"
     ;;
-  status|logs|stop|start|restart|update|backup|restore|uninstall|prune)
+  status|logs|stop|start|restart|update|backup|restore|uninstall|prune|export-images)
     [[ -f $ENV_FILE ]] || { echo '尚未安装，请先运行 install。'; exit 1; }
+    if [[ $COMMAND == update ]]; then python3 "$IMAGE_HELPER" configure "$ENV_FILE"; fi
     configure_compose
     case "$COMMAND" in
       status) dc ps -a ;;
       logs) dc logs --tail 200 ;;
       stop) dc stop -t 60 ;;
       start) up ;;
-      restart) quiesce; up ;;
-      update) backup no; dc build; up ;;
+      restart) require_runtime_images; quiesce; up ;;
+      update) prepare_images; backup no; up ;;
+      export-images) export_images ;;
       backup) backup yes ;;
       prune) python3 "$HELPER" prune "$BACKUP_ROOT" "${OJ_BACKUP_KEEP:-7}" ;;
       uninstall) dc down --remove-orphans; echo '已卸载容器和网络，全部数据、配置和备份均保留。' ;;

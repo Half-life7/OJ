@@ -5,6 +5,15 @@ x-app-image: &app-image
   build:
     context: ..
     dockerfile: deploy/Dockerfile
+    args:
+      GO_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/golang:1.25.4-bookworm
+      RUNTIME_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/alpine:3.22.2
+      GO_PROXY: ${GO_PROXY:-https://proxy.golang.org,direct}
+      ALPINE_MIRROR: ${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+
+x-language-build-args: &language-build-args
+  GO_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/golang:1.25.4-bookworm
+  GO_PROXY: ${GO_PROXY:-https://proxy.golang.org,direct}
 
 x-app-environment: &app-environment
   APP_ENV: ${APP_ENV:-development}
@@ -37,7 +46,8 @@ services:
       context: ..
       dockerfile: deploy/languages/Dockerfile
       args:
-        LANGUAGE_IMAGE: gcc:14.2.0-bookworm
+        <<: *language-build-args
+        LANGUAGE_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/gcc:14.2.0-bookworm
         LANGUAGE_ID: cpp17
     entrypoint: ["/bin/true"]
     restart: "no"
@@ -52,7 +62,8 @@ services:
       context: ..
       dockerfile: deploy/languages/Dockerfile
       args:
-        LANGUAGE_IMAGE: golang:1.25.4-bookworm
+        <<: *language-build-args
+        LANGUAGE_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/golang:1.25.4-bookworm
         LANGUAGE_ID: go
     entrypoint: ["/bin/true"]
     restart: "no"
@@ -67,7 +78,8 @@ services:
       context: ..
       dockerfile: deploy/languages/Dockerfile
       args:
-        LANGUAGE_IMAGE: python:3.12.10-slim-bookworm
+        <<: *language-build-args
+        LANGUAGE_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/python:3.12.10-slim-bookworm
         LANGUAGE_ID: python3
     entrypoint: ["/bin/true"]
     restart: "no"
@@ -82,7 +94,8 @@ services:
       context: ..
       dockerfile: deploy/languages/Dockerfile
       args:
-        LANGUAGE_IMAGE: eclipse-temurin:21.0.7_6-jdk-jammy
+        <<: *language-build-args
+        LANGUAGE_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/eclipse-temurin:21.0.7_6-jdk-jammy
         LANGUAGE_ID: java
     entrypoint: ["/bin/true"]
     restart: "no"
@@ -97,7 +110,8 @@ services:
       context: ..
       dockerfile: deploy/languages/Dockerfile
       args:
-        LANGUAGE_IMAGE: node:22.23.4-bookworm-slim
+        <<: *language-build-args
+        LANGUAGE_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/node:22.23.4-bookworm-slim
         LANGUAGE_ID: javascript
     entrypoint: ["/bin/true"]
     restart: "no"
@@ -107,7 +121,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   mysql:
-    image: mysql:8.0.46
+    image: ${DOCKERHUB_LIBRARY:-docker.io/library}/mysql:8.0.46
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-biue}
@@ -127,7 +141,7 @@ services:
       start_period: 30s
 
   redis:
-    image: redis:7.4.11-alpine3.21
+    image: ${DOCKERHUB_LIBRARY:-docker.io/library}/redis:7.4.11-alpine3.21
     restart: unless-stopped
     user: redis
     environment:
@@ -303,6 +317,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/nginx/Dockerfile
+      args:
+        NGINX_IMAGE: ${DOCKERHUB_LIBRARY:-docker.io/library}/nginx:1.30.6-alpine
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PUBLIC_HTTP_PORT:-8080}:8080"

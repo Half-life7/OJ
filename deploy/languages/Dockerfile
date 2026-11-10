@@ -1,8 +1,10 @@
 ARG LANGUAGE_IMAGE=python:3.12.10-slim-bookworm
-FROM --platform=$BUILDPLATFORM golang:1.25.4-bookworm AS builder
+ARG GO_IMAGE=golang:1.25.4-bookworm
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+ARG GO_PROXY=https://proxy.golang.org,direct
+RUN GOPROXY="$GO_PROXY" go mod download
 COPY . .
 ARG TARGETOS=linux
 ARG TARGETARCH
