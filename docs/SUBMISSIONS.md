@@ -38,4 +38,4 @@
 | 503 / 50302 | 待处理任务达到队列上限 |
 | 503 / 50301 | 数据库、Redis 或其他业务依赖不可用 |
 
-升级前备份数据库、problem-data 和 runner-data，运行 `ojctl migrate up` 至版本 5；迁移 4 增加重试/死信，迁移 5 增加消息隔离，真实迁移验收单独记录。CodeMirror 6 四语言资源已打包到本地静态文件，重建方法与第三方许可证见 tools/editor；Go/Docker 正常构建无需安装 Node。编辑器动态样式使用每请求 nonce，缺少 nonce 或初始化失败时保留 textarea。页面轮询采用退避，终态及离开页面后停止。
+升级前备份数据库、problem-data 和 runner-data，运行 `ojctl migrate up` 至当前版本 8；迁移 4 增加重试/死信，迁移 5 增加消息隔离，真实迁移验收单独记录。CodeMirror 6 四语言资源已打包到本地静态文件，重建方法与第三方许可证见 tools/editor；Go/Docker 正常构建无需安装 Node。编辑器动态样式使用每请求 nonce，缺少 nonce 或初始化失败时保留 textarea。页面轮询采用退避，终态及离开页面后停止。

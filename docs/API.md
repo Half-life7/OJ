@@ -1,5 +1,7 @@
 # 账号、题库与提交 API 说明
 
+批次 5 的管理监控、CSV、封榜与导出接口见 [运维和管理说明](OPERATIONS.md)。超级管理员后台为 `/admin`；比赛操作仍按 contest_admins 作用域校验。
+
 批次 4 的题单、讨论、题解、日常统计及三个全局榜接口见 [社区与全局榜](COMMUNITY.md)。公开读取允许匿名访问；写接口沿用会话、CSRF、Origin 校验及内容权限。
 
 批次 3 的比赛、报名、队伍、身份审核和结算接口见 [比赛 API 与规则](CONTESTS.md#页面与接口)。比赛提交沿用 `/api/submissions`、`/api/runs`，增加可选 contest_id；不接受客户端指定队伍或用户身份。

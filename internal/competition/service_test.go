@@ -81,3 +81,16 @@ func TestInvalidIdentityDoesNotTouchStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRevokeContestAdminAfterSettlement(t *testing.T) {
+	s, m := fixture(t)
+	begin(m, "super_admin")
+	now := s.now()
+	m.ExpectQuery("SELECT .*FROM contests WHERE id=.*FOR UPDATE").WithArgs(uint64(5)).WillReturnRows(sqlmock.NewRows([]string{"id", "title", "scoring_mode", "enrollment_policy", "approval_required", "team_mode", "starts_at", "ends_at", "revision", "settled_at"}).AddRow(5, "Final", "OI", "open", false, false, now.Add(-2*time.Hour), now.Add(-time.Hour), 1, now))
+	m.ExpectExec("DELETE FROM contest_admins").WithArgs(uint64(5), uint64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
+	m.ExpectExec("INSERT INTO audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectCommit()
+	if e := s.Manage(context.Background(), auth.User{ID: 1}, 5, Manage{Action: "revoke_admin", UserID: 9}); e != nil {
+		t.Fatal(e)
+	}
+}

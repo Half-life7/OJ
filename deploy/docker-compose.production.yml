@@ -1,0 +1,53 @@
+services:
+  mysql:
+    volumes: !override
+      - ${DATA_DIR:?DATA_DIR required}/mysql:/var/lib/mysql
+  redis:
+    volumes: !override
+      - ${DATA_DIR:?DATA_DIR required}/redis:/data
+  web:
+    volumes: !override
+      - ${DATA_DIR}/problem-data:/app/oj-data/problem-data
+    environment:
+      APP_ENV: production
+      TRUSTED_PROXY_CIDRS: ${NGINX_IP:-172.29.42.10}/32
+  worker:
+    volumes: !override
+      - ${DATA_DIR}/problem-data:/app/oj-data/problem-data:ro
+      - ${DATA_DIR}/config/tls/ca.pem:/run/runner-tls/ca.pem:ro
+    environment:
+      APP_ENV: production
+      RUNNER_URL: https://runner:8083
+      RUNNER_CA_FILE: /run/runner-tls/ca.pem
+  dispatcher:
+    environment:
+      APP_ENV: production
+  migrate:
+    environment:
+      APP_ENV: production
+  runner:
+    volumes: !override
+      - ${DATA_DIR}/runner-data:/app/oj-data/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DATA_DIR}/config/tls/ca.pem:/run/runner-tls/ca.pem:ro
+      - ${DATA_DIR}/config/tls/server.pem:/run/runner-tls/server.pem:ro
+      - ${DATA_DIR}/config/tls/server.key:/run/runner-tls/server.key:ro
+    environment:
+      APP_ENV: production
+      RUNNER_TLS_CERT: /run/runner-tls/server.pem
+      RUNNER_TLS_KEY: /run/runner-tls/server.key
+      RUNNER_CA_FILE: /run/runner-tls/ca.pem
+  nginx:
+    ports: !override
+      - ${PUBLIC_BIND:-0.0.0.0}:${PUBLIC_HTTP_PORT:-80}:8080
+    volumes:
+      - ${DATA_DIR}/config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${DATA_DIR}/config/public-tls:/run/public-tls:ro
+    networks:
+      edge:
+        ipv4_address: ${NGINX_IP:-172.29.42.10}
+networks:
+  edge:
+    ipam:
+      config: !override
+        - subnet: ${EDGE_SUBNET:-172.29.42.0/24}

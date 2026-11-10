@@ -1,6 +1,8 @@
 # 2D Worker、独立 Runner 与 Docker 沙箱
 
-2D 已包含 Outbox、常驻 Worker、租约/心跳、固定版本请求、四语言 Docker Runner、结果落库后 ACK、执行重试/死信、Redis 对账恢复、消息隔离与死信 CLI。当前迁移版本为 **5**。已在 Docker Desktop Linux/amd64、真实 MySQL/Redis 上完成四语言及故障恢复验收，详见 CHANGELOG.md；Linux/arm64 已交叉编译并仿真启动，不能当作原生整机验收。
+批次 5 已交付生产内部 TLS、部署/备份恢复和 arm64 自定义镜像构建/仿真启动；当前部署流程和平台待验项见 [运维说明](OPERATIONS.md)。下文保留 2D 协议与历史验收边界。
+
+2D 已包含 Outbox、常驻 Worker、租约/心跳、固定版本请求、四语言 Docker Runner、结果落库后 ACK、执行重试/死信、Redis 对账恢复、消息隔离与死信 CLI。当前构建迁移版本为 **8**（批次 5）。已在 Docker Desktop Linux/amd64、真实 MySQL/Redis 上完成四语言及故障恢复验收，详见 CHANGELOG.md；Linux/arm64 已交叉编译并仿真启动，不能当作原生整机验收。
 
 ## 运行与部署
 

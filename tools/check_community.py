@@ -97,5 +97,6 @@ assert own_value('contest')==100
 before={k:board(k) for k in ('practice','contest','solutions')};sql('DELETE FROM global_board_cache');after={k:board(k) for k in before};assert before==after
 anon.call('/api/leaderboards/fourth',expected=400)
 action(lid,'delete');anon.call(f'/api/community/{lid}',expected=404)
-assert sql('SELECT CONCAT(version,":",dirty) FROM schema_migrations')=='7:0'
-print('Migration 7; real daily sandbox AC/Run exclusion; categories/stats; ordered private lists/favorites; discussion reply/context/moderation; sanitized reviewed solutions; three-board dedup/cache reconstruction passed')
+version,dirty=sql('SELECT CONCAT(version,":",dirty) FROM schema_migrations').split(':')
+assert int(version)>=7 and dirty=='0'
+print('Schema >=7; real daily sandbox AC/Run exclusion; categories/stats; ordered private lists/favorites; discussion reply/context/moderation; sanitized reviewed solutions; three-board dedup/cache reconstruction passed')

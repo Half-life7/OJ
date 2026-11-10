@@ -35,8 +35,9 @@ func Handler() (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	for path, p := range map[string]page{
-		"/learning": {Name:"community",Title:"学习社区"},
-		"/rankings": {Name:"rankings",Title:"全局排行榜"},
+		"/admin":            {Name: "operations", Title: "管理与监控"},
+		"/learning":         {Name: "community", Title: "学习社区"},
+		"/rankings":         {Name: "rankings", Title: "全局排行榜"},
 		"/contests":         {Name: "contests", Title: "比赛中心"},
 		"/admin/identities": {Name: "identities", Title: "身份管理"},
 		"/{$}":              {Name: "home", Title: "首页"},
@@ -74,7 +75,7 @@ func Handler() (http.Handler, error) {
 	assetServer := http.FileServer(http.FS(assets))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "community.js", "/community.js", "contests.js", "/contests.js", "app.css", "app.js", "problems.js", "submissions.js", "editor.js", "/app.css", "/app.js", "/problems.js", "/submissions.js", "/editor.js":
+		case "operations.js", "/operations.js", "community.js", "/community.js", "contests.js", "/contests.js", "app.css", "app.js", "problems.js", "submissions.js", "editor.js", "/app.css", "/app.js", "/problems.js", "/submissions.js", "/editor.js":
 		default:
 			http.NotFound(w, r)
 			return

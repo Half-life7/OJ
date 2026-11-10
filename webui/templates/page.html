@@ -8,6 +8,7 @@
   <title>{{.Title}} · Biue OJ</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
+  {{if eq .Name "operations"}}<script src="/static/operations.js" defer></script>{{end}}
   {{if or (eq .Name "community") (eq .Name "rankings") (eq .Name "problem") (eq .Name "problems")}}<script src="/static/community.js" defer></script>{{end}}
   {{if or (eq .Name "contests") (eq .Name "identities")}}<script src="/static/contests.js" defer></script>{{end}}
   {{if or (eq .Name "problems") (eq .Name "problem") (eq .Name "admin-problems")}}<script src="/static/problems.js" defer></script>{{end}}
@@ -87,7 +88,7 @@
     <section class="profile-heading"><div><p class="eyebrow">YOUR ACCOUNT</p><h1>个人中心</h1><p>查看账号身份，管理登录密码。</p></div><button id="logout-button" class="button secondary" type="button" hidden>退出登录 <span aria-hidden="true">↗</span></button></section>
     <div id="profile-state" class="state-card" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span><p id="profile-state-text">正在读取账号信息…</p><a id="profile-login" class="button primary" href="/login" hidden>去登录 <span aria-hidden="true">→</span></a><button id="profile-retry" class="button secondary" type="button" hidden>重新加载</button></div>
     <div id="profile-content" class="profile-grid" hidden>
-      <section class="profile-card"><div class="card-heading"><span class="card-number">PROFILE</span><h2>账号与身份</h2></div><dl class="profile-details"><div><dt>账号 ID</dt><dd id="profile-username"></dd></div><div><dt>显示名称</dt><dd id="profile-display-name"></dd></div><div><dt>账号类型</dt><dd id="profile-account-type"></dd></div><div><dt>账号状态</dt><dd id="profile-status"></dd></div><div><dt>全局角色</dt><dd id="profile-role"></dd></div><div><dt>学号</dt><dd id="profile-student-no"></dd></div><div><dt>学号审核</dt><dd id="profile-student-status"></dd></div></dl><p class="profile-note">学号与账号 ID 分开管理。身份审核与纠错由管理员处理。</p><a id="profile-admin-link" href="/admin/problems" class="button secondary" hidden>管理题目 <span aria-hidden="true">→</span></a></section>
+      <section class="profile-card"><div class="card-heading"><span class="card-number">PROFILE</span><h2>账号与身份</h2></div><dl class="profile-details"><div><dt>账号 ID</dt><dd id="profile-username"></dd></div><div><dt>显示名称</dt><dd id="profile-display-name"></dd></div><div><dt>账号类型</dt><dd id="profile-account-type"></dd></div><div><dt>账号状态</dt><dd id="profile-status"></dd></div><div><dt>全局角色</dt><dd id="profile-role"></dd></div><div><dt>学号</dt><dd id="profile-student-no"></dd></div><div><dt>学号审核</dt><dd id="profile-student-status"></dd></div></dl><p class="profile-note">学号与账号 ID 分开管理。身份审核与纠错由管理员处理。</p><a id="profile-admin-link" href="/admin" class="button secondary" hidden>管理中心 <span aria-hidden="true">→</span></a></section>
       <section class="profile-card"><div class="card-heading"><span class="card-number">SECURITY</span><h2>修改密码</h2><p>修改成功后，所有设备上的旧登录会话均会失效。</p></div>
         <form id="password-form"><fieldset id="password-fields" disabled>
           <label for="current-password">当前密码</label><input id="current-password" name="current_password" type="password" required maxlength="72" autocomplete="current-password">
@@ -98,6 +99,7 @@
       </section>
     </div>
     <p class="form-message" id="logout-message" role="status" aria-live="polite" hidden></p>
+    {{else if eq .Name "operations"}}{{template "operations" .}}
     {{else if eq .Name "community"}}{{template "community" .}}
     {{else if eq .Name "rankings"}}{{template "rankings" .}}
     {{else if eq .Name "contests"}}{{template "contests" .}}

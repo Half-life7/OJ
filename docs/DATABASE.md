@@ -1,10 +1,12 @@
 # 数据库说明
 
-当前构建期望迁移版本 **7**。新增 community_documents、problem_list_items、problem_list_favorites、discussion_likes、community_write_limits、global_board_cache；内容使用 revision 和软删除，收藏/点赞以 `(document_id,user_id)` 唯一键防重。三榜缓存可从权威事实重建，身份关联和结算会使缓存失效。口径和验收见 [批次 4](COMMUNITY.md)。下文迁移 6 段落保留为此前版本说明。
+当前构建要求迁移 **8**：新增 contest_freezes 封榜历史与 contest_imports 预览/确认状态；其他历史表保持。预览比较解码后的 JSON，确认、批量状态及快照审计同事务。部署恢复包含会话撤销与系统审计，见 [批次 5](OPERATIONS.md)。
 
-当前构建期望迁移版本 **6**。批次 3 新增 contests、contest_admins、contest_problems、contest_teams、contest_team_members、contest_snapshots、contest_points；persons 增加 organization 与 revision，submissions 增加比赛/队伍引用约束。参赛身份快照、每轮逐点结果及结算积分保留历史；积分主键 `(contest_id, person_id)` 防止重复入账。规则见 [比赛说明](CONTESTS.md)。迁移 6 回退在已有比赛提交时主动拒绝恢复“仅日常提交”约束，避免静默删除历史。
+迁移 7。新增 community_documents、problem_list_items、problem_list_favorites、discussion_likes、community_write_limits、global_board_cache；内容使用 revision 和软删除，收藏/点赞以 `(document_id,user_id)` 唯一键防重。三榜缓存可从权威事实重建，身份关联和结算会使缓存失效。口径和验收见 [批次 4](COMMUNITY.md)。下文迁移 6 段落保留为此前版本说明。
 
-迁移 1 为身份与认证，迁移 2 为题目与不可变版本，迁移 3 为提交与任务基础，迁移 4 为执行重试与死信，迁移 5 为消息隔离；当前期望版本为 5。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收结果见 CHANGELOG.md；运行代码的最新期望版本以 migrations.ExpectedVersion 为准。
+迁移 6。批次 3 新增 contests、contest_admins、contest_problems、contest_teams、contest_team_members、contest_snapshots、contest_points；persons 增加 organization 与 revision，submissions 增加比赛/队伍引用约束。参赛身份快照、每轮逐点结果及结算积分保留历史；积分主键 `(contest_id, person_id)` 防止重复入账。规则见 [比赛说明](CONTESTS.md)。迁移 6 回退在已有比赛提交时主动拒绝恢复“仅日常提交”约束，避免静默删除历史。
+
+迁移 1 为身份与认证，迁移 2 为题目与不可变版本，迁移 3 为提交与任务基础，迁移 4 为执行重试与死信，迁移 5 为消息隔离；当时（2D）的期望版本为 5。使用 MySQL 8、InnoDB、utf8mb4、BIGINT UNSIGNED 主键，应用写入 UTC DATETIME(6)。数据库实际迁移及约束验收结果见 CHANGELOG.md；运行代码的最新期望版本以 migrations.ExpectedVersion 为准。
 
 ## 数据关系
 

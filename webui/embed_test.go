@@ -23,6 +23,8 @@ func TestPagesAndEmbeddedAssets(t *testing.T) {
 		{"/register", "register-form", "text/html"},
 		{"/login", "login-form", "text/html"},
 		{"/me", "password-form", "text/html"},
+		{"/admin", "operations-content", "text/html"},
+		{"/static/operations.js", "/api/admin/operations", "text/javascript"},
 		{"/learning", "learning-form", "text/html"},
 		{"/rankings", "board-rows", "text/html"},
 		{"/static/community.js", "/api/community", "text/javascript"},

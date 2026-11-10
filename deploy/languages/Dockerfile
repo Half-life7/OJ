@@ -1,5 +1,5 @@
 ARG LANGUAGE_IMAGE=python:3.12.10-slim-bookworm
-FROM golang:1.25.4-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.4-bookworm AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

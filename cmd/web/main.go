@@ -17,6 +17,7 @@ import (
 	"biue/internal/community"
 	"biue/internal/competition"
 	"biue/internal/config"
+	"biue/internal/operations"
 	"biue/internal/problem"
 	"biue/internal/problemdata"
 	"biue/internal/server"
@@ -90,6 +91,7 @@ func run() error {
 			submissionHTTP.RegisterRoutes(r)
 			competition.NewHandler(competition.New(db), svc).RegisterRoutes(r)
 			community.NewHandler(community.New(db), svc).RegisterRoutes(r)
+			operations.NewHandler(operations.New(db, client, cfg.JudgeQueueCapacity), svc).RegisterRoutes(r)
 		}, UI: ui, Logger: logger,
 	})
 	srv := &http.Server{

@@ -30,6 +30,7 @@ type ProblemView struct {
 	Statement        json.RawMessage `db:"snapshot_json" json:"statement"`
 }
 type View struct {
+	Frozen    bool          `json:"frozen"`
 	Contest   Contest       `json:"contest"`
 	Manager   bool          `json:"manager"`
 	Teams     []Team        `json:"teams"`
@@ -147,6 +148,22 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 	if manager || !s.now().Before(c.Start) {
 		if err = tx.SelectContext(ctx, &v.Problems, `SELECT cp.problem_id,cp.statement_version,cp.data_version,pv.snapshot_json FROM contest_problems cp JOIN problem_versions pv ON pv.problem_id=cp.problem_id AND pv.version=cp.statement_version WHERE cp.contest_id=? ORDER BY cp.problem_id`, id); err != nil {
 			return v, ErrUnavailable
+		}
+	}
+	{
+		var frozen []byte
+		err = tx.GetContext(ctx, &frozen, `SELECT standings FROM contest_freezes WHERE contest_id=? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, id)
+		if err == nil {
+			v.Frozen = true
+			if !manager && json.Unmarshal(frozen, &v.Standings) != nil {
+				return View{}, ErrUnavailable
+			}
+			if !manager {
+				return v, storageError(tx.Commit())
+			}
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return View{}, ErrUnavailable
 		}
 	}
 	if c.Settled != nil {

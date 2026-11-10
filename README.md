@@ -1,12 +1,14 @@
 # Biue OJ
 
-最新进度：**批次 4 已完成**，当前迁移版本 **7**。已交付日常统计与分类、题单、讨论/回复/点赞、审核题解，以及日常解题/比赛积分/题解发布三个全局榜。真实 MySQL/Redis/Python 沙箱和 Edge 桌面/手机页面已验收，详见 [社区与全局榜](docs/COMMUNITY.md)。批次 3 的比赛、身份和计分交付见 [比赛说明](docs/CONTESTS.md)。
+最新进度：**批次 5 功能与容器验收已完成，原生整机单列待验**，当前迁移版本 **8**。已交付 CSV 预览确认、封榜/解封、管理监控、Linux 安装/更新/备份恢复、内部 Runner TLS 与可配置 HTTPS。独立 Debian 控制器已完成四语言和三模式、更新保数据、同实例及全新实例恢复；arm64 应用/四语言/Nginx 镜像构建与仿真启动通过，详见 [部署与运维](docs/OPERATIONS.md)。用户已选择暂无原生服务器，原生 Ubuntu、真实重启/跨机和原生 arm64 整机验收保留待验。
 
 面向编程练习与校内竞赛的在线评测系统，采用 Go 模块化单体架构。现已实现工程基础、账号认证、题库、不可变数据版本与提交任务基础，完整需求见 [plan.md](plan.md)，分批计划见 [实施计划](docs/IMPLEMENTATION_PLAN.md)，实际改动与验证记录见 [修订日志](CHANGELOG.md)。
 
 Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由、中间件和参数绑定统一使用 Gin。四语言镜像已实际构建，amd64 全链路及故障恢复通过；arm64 已交叉编译并通过仿真启动，原生 arm64/生产整机验收留在后续部署批次。
 
 ## 当前功能
+
+- 管理后台 `/admin`、CSV 名单预览确认、批量参赛状态、成绩导出、保留历史的封榜/解封；根目录 `deploy.sh` 提供 Linux 安装、更新、备份、恢复和保留数据卸载。
 
 - 学习社区 `/learning`：有序公开/私有题单、收藏、题目/比赛讨论、回复/点赞、Markdown 题解审核；`/rankings` 提供三个可重建全局榜，题目页显示日常通过统计。
 
@@ -22,7 +24,7 @@ Web 框架使用 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由�
 - Run/Submit 分离、版本固定、独立限流与队列容量控制；提交、任务、Outbox 同事务保存。CodeMirror 6 本地四语言编辑器、本人提交记录和状态轮询已接入。Worker 在依赖就绪后领取 Pending 任务并调用认证 Runner，真实结果同事务保存后才确认消息。
 - 四语言编译/执行、每点独立沙箱、禁网/只读根目录/CPU/内存/PID/时间/输出限制、执行重试与死信、消息隔离、Redis 数据丢失后的 Outbox 对账及经管理员授权的死信 CLI。
 
-CSV 导入、封榜和完整批量管理在批次 5。完整生产一键安装、升级、备份恢复与 Linux 部署验收也尚未交付。
+批次 5 的管理和部署功能已交付，原生整机验收按约定待验；P2 扩展仍在批次 6。
 
 ## 开发环境
 
@@ -142,7 +144,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 
 开发配置只绑定宿主机 `127.0.0.1`。修改访问端口时同步修改 `PUBLIC_HTTP_PORT` 和 `PUBLIC_URL`。容器内部 Web 固定使用 8080。`edge` 网络使用 `172.30.0.0/24`，Nginx 固定为 `172.30.0.10`，应用仅信任该 `/32` 代理；若本机已有同名网段，需同时修改 Compose 网段、Nginx 地址和 `TRUSTED_PROXY_CIDRS`。直接运行 Web 且无反向代理时，该变量留空。
 
-本批 Nginx 提供本机 HTTP 入口。HTTPS 生产入口、证书维护、完整安装升级脚本、备份恢复将在部署批次补齐；`PUBLIC_URL` 应与实际访问的协议、主机和端口一致，不能仅修改为 HTTPS 而未配置 TLS 入口。
+本节开发 Nginx 提供本机 HTTP 入口。生产 HTTP/HTTPS、安装升级和备份恢复使用 [部署与运维](docs/OPERATIONS.md) 中的独立配置；`PUBLIC_URL` 应与实际访问的协议、主机和端口一致，不能仅修改为 HTTPS 而未配置 TLS 入口。
 
 ## 配置与接口
 
@@ -187,4 +189,4 @@ node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs
 
 后续开发按实施计划推进，每批同步修订日志，保留原始需求及历史数据。
 
-下一目标为批次 5（完整管理与部署交付），建议使用 **GPT-6 Astra + high（高）思考强度**。各节点建议见 [实施计划](docs/IMPLEMENTATION_PLAN.md)。
+后续为批次 6（SSE、Special Judge、重判管理等 P2 扩展），建议 **GPT-6 Astra + high（高）**；原生平台待验项保持单列。

@@ -1,0 +1,4 @@
+services:
+  nginx:
+    ports:
+      - ${PUBLIC_BIND:-0.0.0.0}:${PUBLIC_HTTPS_PORT:-443}:8443

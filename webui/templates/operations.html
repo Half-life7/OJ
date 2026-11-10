@@ -1,0 +1,13 @@
+{{define "operations"}}
+<section class="profile-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理与监控</h1><p>用户、队列、审计和既有管理入口。</p></div></section>
+<p id="operations-message" role="status" aria-live="polite">正在验证管理权限…</p>
+<div id="operations-content" hidden>
+<section class="profile-card"><h2>管理入口</h2><div class="learning-actions"><a href="/admin/identities" class="button secondary">学号与身份</a><a href="/admin/problems" class="button secondary">题目与数据版本</a><a href="/contests" class="button secondary">比赛、CSV 与封榜</a><a href="/learning?kind=solution" class="button secondary">社区与题解审核</a></div></section>
+<section class="profile-card"><h2>系统与队列</h2><button id="operations-refresh" class="button secondary" type="button">刷新</button><dl id="operations-metrics" class="profile-details"></dl></section>
+<section class="profile-card"><h2>账号管理</h2><form id="operations-search"><label>账号 ID、姓名或学号<input name="q" maxlength="200"></label><button class="button primary">搜索</button></form><div id="operations-users" class="learning-list"></div><button id="operations-users-more" type="button">加载更多账号</button>
+<form id="operations-status"><h3>启用 / 禁用账号</h3><label>账号数字编号<input name="id" type="number" min="1" required></label><label>状态<select name="status"><option value="disabled">禁用</option><option value="active">启用</option></select></label><label>原因<input name="reason" maxlength="255" required></label><button class="button primary">保存状态</button></form>
+<form id="operations-history"><h3>查看账号提交记录</h3><label>账号数字编号<input name="id" type="number" min="1" required></label><button class="button secondary">读取</button></form><div id="operations-history-list"></div></section>
+<section class="profile-card"><h2>审计记录</h2><button id="operations-audits-more" type="button">读取下一批</button><div id="operations-audits" class="learning-list"></div></section>
+<section class="profile-card"><h2>死信与消息隔离</h2><button id="operations-queue-refresh" type="button">刷新记录</button><div id="operations-dead"></div><form id="operations-retry"><label>死信编号<input name="id" type="number" min="1" required></label><label>当前 generation<input name="generation" type="number" min="1" required></label><button class="button secondary">人工重试</button></form><div id="operations-quarantine"></div></section>
+</div>
+{{end}}

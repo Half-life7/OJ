@@ -76,6 +76,36 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		c.Set("competition-user", a)
 		c.Next()
 	})
+	g.POST("/api/contests/:id/csv/preview", func(c *gin.Context) {
+		var in struct {
+			CSV string `json:"csv"`
+		}
+		if e := c.ShouldBindWith(&in, httpx.JSONBinding{MaxBytes: 1 << 20}); e != nil {
+			reply(c, nil, ErrInvalid)
+			return
+		}
+		v, e := h.service.PreviewCSV(c.Request.Context(), user(c), id(c), in.CSV)
+		reply(c, v, e)
+	})
+	g.POST("/api/contests/:id/csv/confirm", func(c *gin.Context) {
+		var in struct {
+			Token string `json:"token"`
+		}
+		if !bind(c, &in) {
+			return
+		}
+		reply(c, nil, h.service.ConfirmCSV(c.Request.Context(), user(c), id(c), in.Token))
+	})
+	g.GET("/api/contests/:id/export.csv", func(c *gin.Context) {
+		v, e := h.service.ExportCSV(c.Request.Context(), user(c), id(c))
+		if e != nil {
+			reply(c, nil, e)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Disposition", `attachment; filename="contest.csv"`)
+		c.Data(200, "text/csv; charset=utf-8", v)
+	})
 	g.POST("/api/contests/:id/temporary-accounts", func(c *gin.Context) {
 		var in Temporary
 		if !bind(c, &in) {

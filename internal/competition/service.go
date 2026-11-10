@@ -166,6 +166,7 @@ func (s *Service) Save(ctx context.Context, a auth.User, c Contest) (uint64, err
 }
 
 type Manage struct {
+	TeamIDs   []uint64 `json:"team_ids"`
 	Action    string   `json:"action"`
 	ProblemID uint64   `json:"problem_id"`
 	UserID    uint64   `json:"user_id"`
@@ -185,11 +186,55 @@ func (s *Service) Manage(ctx context.Context, a auth.User, id uint64, m Manage) 
 		if err = allowed(ctx, tx, a, id); err != nil {
 			return err
 		}
-		if c.Settled != nil && m.Action != "retire_account" {
+		if c.Settled != nil && m.Action != "retire_account" && m.Action != "unfreeze" && m.Action != "grant_admin" && m.Action != "revoke_admin" {
 			return ErrConflict
 		}
 		now := s.now().UTC()
 		switch m.Action {
+		case "bulk_status":
+			if len(m.TeamIDs) < 1 || len(m.TeamIDs) > 500 || m.Status != "active" && m.Status != "withdrawn" || m.Type != "official" && m.Type != "star" {
+				return ErrInvalid
+			}
+			seen := map[uint64]bool{}
+			for _, team := range m.TeamIDs {
+				if team == 0 || seen[team] {
+					return ErrInvalid
+				}
+				seen[team] = true
+				var ok bool
+				if err = tx.GetContext(ctx, &ok, `SELECT EXISTS(SELECT 1 FROM contest_teams WHERE contest_id=? AND id=?)`, id, team); err != nil {
+					return err
+				}
+				if !ok {
+					return ErrConflict
+				}
+				if _, err = tx.ExecContext(ctx, `UPDATE contest_teams SET status=?,participant_type=? WHERE contest_id=? AND id=?`, m.Status, m.Type, id, team); err != nil {
+					return err
+				}
+			}
+		case "freeze", "unfreeze":
+			if now.Before(c.Start) {
+				return ErrConflict
+			}
+			if m.Action == "unfreeze" {
+				_, err = tx.ExecContext(ctx, `UPDATE contest_freezes SET ended_at=UTC_TIMESTAMP(6) WHERE contest_id=? AND ended_at IS NULL`, id)
+			} else {
+				var count int
+				if err = tx.GetContext(ctx, &count, `SELECT COUNT(*) FROM contest_freezes WHERE contest_id=? AND ended_at IS NULL`, id); err != nil {
+					return err
+				}
+				if count == 0 {
+					rows, e := calculate(ctx, tx, c)
+					if e != nil {
+						return e
+					}
+					b, e := json.Marshal(rows)
+					if e != nil {
+						return e
+					}
+					_, err = tx.ExecContext(ctx, `INSERT INTO contest_freezes(contest_id,standings,created_at) VALUES (?,?,UTC_TIMESTAMP(6))`, id, string(b))
+				}
+			}
 		case "retire_account":
 			if now.Before(c.End) {
 				return ErrConflict
