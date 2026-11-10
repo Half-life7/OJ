@@ -228,7 +228,11 @@ func (s *Service) Settle(ctx context.Context, a auth.User, id uint64) ([]scoring
 		if _, err = tx.ExecContext(ctx, `UPDATE contests SET settled_at=UTC_TIMESTAMP(6) WHERE id=?`, id); err != nil {
 			return err
 		}
-		return audit(ctx, tx, a.ID, "contest.settle", "contest", id, map[string]any{"teams": n, "policy": s.points.Name()})
+		if err = audit(ctx, tx, a.ID, "contest.settle", "contest", id, map[string]any{"teams": n, "policy": s.points.Name()}); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM global_board_cache`)
+		return err
 	})
 	return rows, err
 }

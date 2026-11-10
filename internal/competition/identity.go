@@ -128,6 +128,10 @@ func (s *Service) Link(ctx context.Context, a auth.User, in Link) error {
 			return ErrConflict
 		}
 		// Existing contest snapshots and point ownership intentionally remain fixed.
-		return audit(ctx, tx, a.ID, "identity.link", "user", in.UserID, in)
+		if err := audit(ctx, tx, a.ID, "identity.link", "user", in.UserID, in); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM global_board_cache`)
+		return err
 	})
 }

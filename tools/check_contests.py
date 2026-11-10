@@ -166,8 +166,9 @@ def main():
     manage(cid,action='retire_account',user_id=temp_id)
     temp.call('/api/users/me',expected=401)
     print('identity audit/conflict, team uniqueness, temporary login and practice isolation passed', flush=True)
-    assert sql('SELECT CONCAT(version, ":", dirty) FROM schema_migrations') == '6:0'
-    print('schema 6 clean; SQL scoring fixtures were used (not sandbox execution)', flush=True)
+    version, dirty = sql('SELECT CONCAT(version, ":", dirty) FROM schema_migrations').split(":")
+    assert int(version) >= 6 and dirty == "0"
+    print('schema >=6 clean; SQL scoring fixtures were used (not sandbox execution)', flush=True)
 
 if __name__ == "__main__":
     main()

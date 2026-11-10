@@ -51,6 +51,7 @@ type Problem struct {
 }
 
 type ListOptions struct {
+	Category                                   string
 	Page, Limit                                int
 	Query, Difficulty, Tag, Status, Visibility string
 }

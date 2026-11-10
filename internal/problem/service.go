@@ -192,6 +192,14 @@ func (s *Service) List(ctx context.Context, actor Actor, opts ListOptions) (Page
 		conditions = append(conditions, "EXISTS (SELECT 1 FROM problem_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.problem_id = p.id AND t.name = ?)")
 		args = append(args, tag)
 	}
+	if opts.Category != "" {
+		category, err := normalizeTag("category:" + opts.Category)
+		if err != nil {
+			return Page{}, err
+		}
+		conditions = append(conditions, "EXISTS (SELECT 1 FROM problem_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.problem_id = p.id AND t.name = ?)")
+		args = append(args, category)
+	}
 	where := " FROM problems p WHERE " + strings.Join(conditions, " AND ")
 	result := Page{Items: []Problem{}, Page: page, Limit: limit}
 	if err := s.db.GetContext(ctx, &result.Total, "SELECT COUNT(*)"+where, args...); err != nil {

@@ -8,6 +8,7 @@
   <title>{{.Title}} · Biue OJ</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
+  {{if or (eq .Name "community") (eq .Name "rankings") (eq .Name "problem") (eq .Name "problems")}}<script src="/static/community.js" defer></script>{{end}}
   {{if or (eq .Name "contests") (eq .Name "identities")}}<script src="/static/contests.js" defer></script>{{end}}
   {{if or (eq .Name "problems") (eq .Name "problem") (eq .Name "admin-problems")}}<script src="/static/problems.js" defer></script>{{end}}
   {{if eq .Name "problem"}}<script src="/static/editor.js" defer></script>{{end}}
@@ -19,6 +20,7 @@
     <div class="header-inner">
       <a class="brand" href="/" aria-label="Biue OJ 首页"><span class="brand-mark" aria-hidden="true">b.</span><span>Biue <strong>OJ</strong><small>编程练习与竞赛</small></span></a>
       <nav aria-label="主导航">
+        <a href="/learning">社区</a><a href="/rankings">排行榜</a>
         <a href="/contests">比赛</a>
         <a href="/" {{if eq .Name "home"}}aria-current="page"{{end}}>首页</a>
         <a href="/problems" {{if or (eq .Name "problems") (eq .Name "problem")}}aria-current="page"{{end}}>题库</a>
@@ -96,6 +98,8 @@
       </section>
     </div>
     <p class="form-message" id="logout-message" role="status" aria-live="polite" hidden></p>
+    {{else if eq .Name "community"}}{{template "community" .}}
+    {{else if eq .Name "rankings"}}{{template "rankings" .}}
     {{else if eq .Name "contests"}}{{template "contests" .}}
     {{else if eq .Name "identities"}}{{template "identities" .}}
     {{else if eq .Name "problems"}}{{template "problems-list" .}}

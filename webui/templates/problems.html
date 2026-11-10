@@ -5,6 +5,7 @@
 {{define "problems-list"}}
 <section class="profile-heading"><div><p class="eyebrow">PROBLEM LIBRARY</p><h1>题库</h1><p>发现下一道值得思考的题目。</p></div></section>
 <form id="problem-filter-form" class="problem-filters" role="search" aria-label="筛选题目">
+<div><label for="problem-category">分类</label><input id="problem-category" name="category" maxlength="23" placeholder="例如 graph"></div>
   <div><label for="problem-query">标题或题目 ID</label><input id="problem-query" name="q" maxlength="200" placeholder="搜索题目"></div>
   <div><label for="problem-difficulty">难度</label><select id="problem-difficulty" name="difficulty"><option value="">全部难度</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></div>
   <div><label for="problem-tag">标签</label><input id="problem-tag" name="tag" maxlength="32" placeholder="例如 动态规划"></div>

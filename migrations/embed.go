@@ -8,4 +8,4 @@ import "embed"
 //go:embed *.sql
 var Files embed.FS
 
-const ExpectedVersion uint = 6
+const ExpectedVersion uint = 7

@@ -14,6 +14,7 @@ import (
 	_ "time/tzdata"
 
 	"biue/internal/auth"
+	"biue/internal/community"
 	"biue/internal/competition"
 	"biue/internal/config"
 	"biue/internal/problem"
@@ -88,6 +89,7 @@ func run() error {
 			problemHTTP.RegisterRoutes(r)
 			submissionHTTP.RegisterRoutes(r)
 			competition.NewHandler(competition.New(db), svc).RegisterRoutes(r)
+			community.NewHandler(community.New(db), svc).RegisterRoutes(r)
 		}, UI: ui, Logger: logger,
 	})
 	srv := &http.Server{

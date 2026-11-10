@@ -149,6 +149,7 @@ func (h *Handler) list(admin bool) gin.HandlerFunc {
 			return
 		}
 		opts := ListOptions{Page: page, Limit: limit, Query: c.Query("q"), Difficulty: c.Query("difficulty"), Tag: c.Query("tag")}
+		opts.Category = c.Query("category")
 		if admin {
 			opts.Status, opts.Visibility = c.Query("status"), c.Query("visibility")
 		}
