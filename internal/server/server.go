@@ -151,11 +151,19 @@ func observe(logger *slog.Logger) gin.HandlerFunc {
 		r.Header.Set("X-Request-ID", requestID)
 		requestContext := context.WithValue(r.Context(), requestIDKey{}, requestID)
 		requestContext = httpx.WithStyleNonce(requestContext, styleNonce)
-		ctx, cancel := context.WithTimeout(requestContext, 15*time.Second)
+		timeout := 15 * time.Second
+		if isProblemUploadPath(r.URL.Path) {
+			timeout = 2 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(requestContext, timeout)
 		defer cancel()
 		c.Request = r.WithContext(ctx)
 		c.Next()
 	}
+}
+
+func isProblemUploadPath(path string) bool {
+	return strings.HasPrefix(path, "/api/admin/problems/") && strings.HasSuffix(path, "/data-versions")
 }
 
 func csrfProtection(cfg config.Config) gin.HandlerFunc {
@@ -200,7 +208,7 @@ func originCheck(publicURL string) gin.HandlerFunc {
 			if raw := r.Header.Get("Origin"); raw != "" {
 				u, err := url.Parse(raw)
 				if err != nil || u.User != nil || u.Scheme != expected.Scheme || !strings.EqualFold(u.Host, expected.Host) || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-					write(c.Writer, 403, 40301, "untrusted request origin", nil)
+					write(c.Writer, 403, 40301, "请求来源不受信任，请检查 PUBLIC_URL 与浏览器地址（协议、主机和端口）是否一致", map[string]string{"request_id": RequestID(r.Context())})
 					c.Abort()
 					return
 				}

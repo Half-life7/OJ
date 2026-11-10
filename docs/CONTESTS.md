@@ -29,7 +29,7 @@
 
 ## 页面与接口
 
-页面：`/contests`、`/admin/identities`。比赛中心提供名单搜索，按选手类型、参赛状态、账号类型与最少提交次数筛选。身份列表同时展示关联账号 ID 和数字编号。
+页面：`/contests`、`/contests/:id`、`/admin/identities`。比赛中心列表只展示比赛；进入详情后使用左侧功能区切换概览、题目、名单与成绩、提交、本人身份以及管理员操作。详情响应使用请求代次，迟到的旧比赛响应不会覆盖当前标题或写操作目标。CSV 预览绑定当前比赛和当前文本，切换比赛或修改 CSV 后立即失效。身份列表同时展示关联账号 ID 和数字编号。
 
 以下接口均需有效会话，写接口沿用全站 Origin/CSRF 防护，JSON 上限 64 KiB；越权返回 403，状态/唯一性冲突返回 409，内部错误隐藏为 503。比赛提交另沿用原有 Run/Submit 限流。
 
@@ -37,6 +37,7 @@
 | --- | --- | --- |
 | GET / POST | `/api/contests` | 游标列表（`after`，最多 100 条）/超级管理员创建 |
 | GET / PUT | `/api/contests/:id` | 比赛、题面、名单、成绩/赛前配置更新（带 revision） |
+| GET | `/api/contests/:id/manage-options?q=` | 授权管理员按名称/编号搜索可绑定题目，并按账号、姓名或学号搜索人员及现有比赛管理员 |
 | POST | `/api/contests/:id/enroll` | 永久账号自由报名个人赛 |
 | POST | `/api/contests/:id/manage` | 授权管理员管理题目、队伍、状态；超级管理员授予/撤销比赛管理员 |
 | POST | `/api/contests/:id/temporary-accounts` | 管理员创建临时账号并加入比赛，密码不进入审计 |
@@ -47,6 +48,8 @@
 | POST | `/api/admin/identity-links` | user_id、from_person_id、to_person_id、reason，显式关联 |
 
 manage 的 action：`add_problem` / `remove_problem`、`add_team`（name、members 数字账号 ID 数组、participant_type）、`team_status`（team_id、status、participant_type）、`grant_admin` / `revoke_admin`（user_id）、`retire_account`（赛后临时账号）。赛前可以增减题目并绑定当时版本，开始后固定。团队赛通过管理员提交成员列表建立，多账号对应同一 person 时拒绝重复入场。
+
+管理页按动作只展示相关字段，题目和人员选择结果显示名称、编号及固定题面/数据版本；批量状态、移除题目、封榜和结算等操作展示作用比赛并二次确认。当前没有比赛管理权限、比赛已开始、已结束或已结算时，服务端仍独立拒绝不允许的变更。
 
 非成员只能读取比赛配置；普通成员赛前看不到题面。名单/榜单对成员及授权管理员开放；提交源码仅本人、该比赛管理员、超级管理员可读。结算后只允许报废临时账号，不允许再改变比赛成绩配置或启动人工重试。
 

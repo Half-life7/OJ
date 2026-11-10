@@ -6,12 +6,17 @@ import tempfile
 import tarfile
 import gzip
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('maintenance',Path(__file__).parents[1]/'deploy/maintenance.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 with tempfile.TemporaryDirectory() as directory:
     root=Path(directory);env=root/'.env';m.generate(env,'/var/lib/biue','0');first=env.read_bytes();m.generate(env,'/var/lib/biue','0');assert env.read_bytes()==first
     values=m.read_env(env);assert len({values[k] for k in ('MYSQL_PASSWORD','MYSQL_ROOT_PASSWORD','REDIS_PASSWORD','JWT_SECRET','CSRF_SECRET','APP_ENCRYPTION_KEY','RUNNER_TOKEN')})==7
+    output=io.StringIO()
+    with redirect_stdout(output):m.public_info(env)
+    public=output.getvalue();assert 'PUBLIC_URL=http://127.0.0.1' in public and 'EXPECTED_ORIGIN=http://127.0.0.1' in public
+    assert not any(values[key] in public for key in ('MYSQL_PASSWORD','JWT_SECRET','CSRF_SECRET','APP_ENCRYPTION_KEY','RUNNER_TOKEN'))
     invalid=dict(values);invalid['JWT_SECRET']='interpolate$unsafe'
     try:m.check(invalid)
     except ValueError:pass

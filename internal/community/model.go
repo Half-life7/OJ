@@ -49,6 +49,11 @@ type Document struct {
 	Problems   []ListItem `db:"-" json:"problems"`
 	Likes      int        `db:"likes" json:"likes"`
 	Favorites  int        `db:"favorites" json:"favorites"`
+	Liked      bool       `db:"-" json:"liked"`
+	Favorited  bool       `db:"-" json:"favorited"`
+	CanEdit    bool       `db:"-" json:"can_edit"`
+	CanDelete  bool       `db:"-" json:"can_delete"`
+	CanReview  bool       `db:"-" json:"can_review"`
 }
 type ListItem struct {
 	ID       uint64 `db:"id" json:"id"`

@@ -195,6 +195,21 @@ func (s *Service) Get(ctx context.Context, a auth.User, id uint64) (Document, er
 	if e != nil {
 		return Document{}, ErrUnavailable
 	}
+	var capabilities struct {
+		Liked     bool `db:"liked"`
+		Favorited bool `db:"favorited"`
+		CanDelete bool `db:"can_delete"`
+	}
+	if e = tx.GetContext(ctx, &capabilities, `SELECT
+		EXISTS(SELECT 1 FROM discussion_likes l WHERE l.document_id=d.id AND l.user_id=? AND d.kind='discussion') AS liked,
+		EXISTS(SELECT 1 FROM problem_list_favorites f WHERE f.document_id=d.id AND f.user_id=? AND d.kind='list') AS favorited,
+		(d.owner_id=? OR ?='super_admin' OR EXISTS(SELECT 1 FROM contest_admins ca WHERE ca.contest_id=d.contest_id AND ca.user_id=?)) AS can_delete
+		FROM community_documents d WHERE d.id=?`, a.ID, a.ID, a.ID, a.GlobalRole, a.ID, id); e != nil {
+		return Document{}, fail(e)
+	}
+	d.Liked, d.Favorited, d.CanDelete = capabilities.Liked, capabilities.Favorited, capabilities.CanDelete
+	d.CanEdit = a.ID != 0 && a.ID == d.OwnerID
+	d.CanReview = a.GlobalRole == "super_admin" && d.Kind == "solution"
 	return d, fail(tx.Commit())
 }
 func sameID(a, b *uint64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

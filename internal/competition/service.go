@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -205,6 +206,69 @@ type Manage struct {
 	Members   []uint64 `json:"members"`
 }
 
+type UserOption struct {
+	ID          uint64  `db:"id" json:"id"`
+	Username    string  `db:"username" json:"username"`
+	DisplayName string  `db:"display_name" json:"display_name"`
+	AccountType string  `db:"account_type" json:"account_type"`
+	StudentNo   *string `db:"student_no" json:"student_no"`
+}
+
+type ProblemOption struct {
+	ID               uint64 `db:"id" json:"id"`
+	Title            string `db:"title" json:"title"`
+	StatementVersion uint64 `db:"statement_version" json:"statement_version"`
+	DataVersion      uint64 `db:"data_version" json:"data_version"`
+}
+
+type ManageOptions struct {
+	Users    []UserOption    `json:"users"`
+	Admins   []UserOption    `json:"admins"`
+	Problems []ProblemOption `json:"problems"`
+}
+
+func (s *Service) ManageOptions(ctx context.Context, a auth.User, id uint64, query string) (ManageOptions, error) {
+	query = strings.TrimSpace(query)
+	if id == 0 || utf8.RuneCountInString(query) > 100 || strings.ContainsFunc(query, unicode.IsControl) {
+		return ManageOptions{}, ErrInvalid
+	}
+	tx, err := s.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return ManageOptions{}, ErrUnavailable
+	}
+	defer tx.Rollback()
+	if _, err = loadContest(ctx, tx, id); errors.Is(err, sql.ErrNoRows) {
+		return ManageOptions{}, ErrConflict
+	}
+	if err != nil {
+		return ManageOptions{}, storageError(err)
+	}
+	if err = allowed(ctx, tx, a, id); err != nil {
+		return ManageOptions{}, err
+	}
+	like := "%" + strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(query) + "%"
+	result := ManageOptions{Users: []UserOption{}, Admins: []UserOption{}, Problems: []ProblemOption{}}
+	if err = tx.SelectContext(ctx, &result.Users, `SELECT u.id,u.username,u.account_type,p.display_name,p.student_no FROM users u JOIN person_accounts pa ON pa.user_id=u.id JOIN persons p ON p.id=pa.person_id WHERE u.status='active' AND (u.username LIKE ? ESCAPE '=' OR p.display_name LIKE ? ESCAPE '=' OR p.student_no LIKE ? ESCAPE '=') ORDER BY u.id LIMIT 30`, like, like, like); err != nil {
+		return ManageOptions{}, storageError(err)
+	}
+	if err = tx.SelectContext(ctx, &result.Admins, `SELECT u.id,u.username,u.account_type,p.display_name,p.student_no FROM contest_admins ca JOIN users u ON u.id=ca.user_id JOIN person_accounts pa ON pa.user_id=u.id JOIN persons p ON p.id=pa.person_id WHERE ca.contest_id=? ORDER BY u.id`, id); err != nil {
+		return ManageOptions{}, storageError(err)
+	}
+	args := []any{like, like}
+	where := `(p.title LIKE ? ESCAPE '=' OR CAST(p.id AS CHAR) LIKE ? ESCAPE '=')`
+	if problemID, e := strconv.ParseUint(query, 10, 63); e == nil && problemID > 0 {
+		where = `(p.id=? OR p.title LIKE ? ESCAPE '=')`
+		args = []any{problemID, like}
+	}
+	if err = tx.SelectContext(ctx, &result.Problems, `SELECT p.id,p.title,p.statement_version,p.data_version FROM problems p WHERE p.status='published' AND p.data_version IS NOT NULL AND `+where+` ORDER BY p.id DESC LIMIT 30`, args...); err != nil {
+		return ManageOptions{}, storageError(err)
+	}
+	if err = tx.Commit(); err != nil {
+		return ManageOptions{}, ErrUnavailable
+	}
+	return result, nil
+}
+
 func (s *Service) Manage(ctx context.Context, a auth.User, id uint64, m Manage) error {
 	return s.write(ctx, a, func(tx *sqlx.Tx, a auth.User) error {
 		c, err := contest(ctx, tx, id)
@@ -292,7 +356,15 @@ func (s *Service) Manage(ctx context.Context, a auth.User, id uint64, m Manage) 
 				}
 				_, err = tx.ExecContext(ctx, `INSERT INTO contest_admins(contest_id,user_id) VALUES (?,?)`, id, m.UserID)
 			} else {
-				_, err = tx.ExecContext(ctx, `DELETE FROM contest_admins WHERE contest_id=? AND user_id=?`, id, m.UserID)
+				var result sql.Result
+				result, err = tx.ExecContext(ctx, `DELETE FROM contest_admins WHERE contest_id=? AND user_id=?`, id, m.UserID)
+				if err == nil {
+					var affected int64
+					affected, err = result.RowsAffected()
+					if err == nil && affected != 1 {
+						return ErrConflict
+					}
+				}
 			}
 		case "add_problem":
 			if !now.Before(c.Start) {
@@ -313,7 +385,15 @@ func (s *Service) Manage(ctx context.Context, a auth.User, id uint64, m Manage) 
 			if !now.Before(c.Start) {
 				return ErrConflict
 			}
-			_, err = tx.ExecContext(ctx, `DELETE FROM contest_problems WHERE contest_id=? AND problem_id=?`, id, m.ProblemID)
+			var result sql.Result
+			result, err = tx.ExecContext(ctx, `DELETE FROM contest_problems WHERE contest_id=? AND problem_id=?`, id, m.ProblemID)
+			if err == nil {
+				var affected int64
+				affected, err = result.RowsAffected()
+				if err == nil && affected != 1 {
+					return ErrConflict
+				}
+			}
 		case "add_team":
 			if !now.Before(c.Start) {
 				return ErrConflict

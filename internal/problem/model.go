@@ -97,4 +97,10 @@ type VersionPage struct {
 // is retained even if a database commit fails, because its outcome is unknown.
 type DataStore interface {
 	Write(context.Context, testcase.Dataset) (string, error)
+	Read(context.Context, string) (testcase.Dataset, error)
 }
+
+const (
+	ImportReplace = "replace"
+	ImportMerge   = "merge"
+)

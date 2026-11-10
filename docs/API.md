@@ -22,7 +22,7 @@ HTTP 层已迁至 Gin v1.12.0，HTTP 服务底层基于 Go net/http，API 路由
 - 以下认证写接口使用 `Content-Type: application/json`，请求体上限 16 KiB，拒绝未知字段、多份 JSON 和错误类型。退出接口也允许完全不发送请求体。
 - 所有接口响应使用 `Cache-Control: no-store`；账号 Cookie 和密码哈希不在 JSON 中返回。
 - 写接口需要 CSRF Cookie 及 `X-CSRF-Token`；浏览器通过同源 Fetch 携带 Cookie。先请求 GET /api/auth/csrf 获取 token。
-- 写请求的 Origin 如存在，必须匹配 PUBLIC_URL；HTTPS 下 gorilla/csrf 同时执行对应的来源检查。
+- 写请求的 Origin 如存在，必须匹配 PUBLIC_URL 的协议、主机和端口；HTTPS 下 gorilla/csrf 同时执行对应的来源检查。来源错误返回中文说明和安全错误数据中的 request_id，页面错误也附带同一请求 ID，便于在 Web 日志、Nginx 访问日志及审计日志之间定位。
 - 账号 ID 去除首尾空白并转为小写，3～32 个 ASCII 字母、数字、下划线，创建后不可修改。
 - 密码保留原始字节，必须是有效 UTF-8、8～72 字节，不执行截断。确认密码必须与密码完全相同。
 - MySQL/Redis 或迁移状态未就绪时，业务 API 返回 503。CSRF 获取及进程健康检查不依赖数据库就绪。

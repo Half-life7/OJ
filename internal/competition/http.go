@@ -168,6 +168,10 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		reply(c, gin.H{"id": v}, e)
 	})
 	g.GET("/api/contests/:id", func(c *gin.Context) { v, e := h.service.View(c.Request.Context(), user(c), id(c)); reply(c, v, e) })
+	g.GET("/api/contests/:id/manage-options", func(c *gin.Context) {
+		v, e := h.service.ManageOptions(c.Request.Context(), user(c), id(c), c.Query("q"))
+		reply(c, v, e)
+	})
 	g.POST("/api/contests/:id/enroll", func(c *gin.Context) {
 		var in struct{}
 		if !bind(c, &in) {

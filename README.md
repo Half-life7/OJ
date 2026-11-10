@@ -170,7 +170,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 | `/ready` | 检查 MySQL、Redis、迁移版本及 dirty 状态，失败返回 503 |
 | `/register`、`/login`、`/me` | 注册、登录与个人中心 |
 | `/problems`、`/problems/{id}` | 公开题库与题面 |
-| `/admin/problems` | 超级管理员题目管理与 ZIP 上传 |
+| `/admin/problems` | 超级管理员题目管理、ZIP/成对文件上传、分值表与 SPJ 快捷编辑 |
 | `/submissions`、`/submissions/{id}` | 本人提交记录与详情；接口和限制见 [提交说明](docs/SUBMISSIONS.md) |
 
 依赖故障时健康接口仍可查询，相关业务返回 503；Worker、dispatcher 与 Runner 具有各自的进程/依赖健康检查，Web `/ready` 只报告自身数据库/Redis/迁移就绪，不代表整个判题集群就绪。
@@ -184,12 +184,16 @@ go build ./...
 go test -race ./...
 node --check webui/static/app.js
 node --check webui/static/problems.js
+node --check webui/static/contests.js
+node --check webui/static/community.js
 node --check webui/static/submissions.js
 node --check webui/static/editor.js
-node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs
+node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs webui/tests/contests.test.cjs webui/tests/community.test.cjs
 ```
 
 联网环境先执行 `go mod download`，再运行上述全量检查；`go mod verify` 可核对本地模块缓存。`-race` 在 Windows 需要可用的 C 编译器。页面本身不依赖 Node，Node 命令用于脚本语法和页面行为验证。HTTP、sqlmock、miniredis 测试验证认证行为、事务边界与限流，不能代替真实 MySQL 唯一约束、迁移和 Redis 故障恢复验收。
+
+真实页面回归需要独立的 `.cache/2d-acceptance.env`、运行中的验收 Compose 项目和 Playwright；使用当前源码重建 Web/Nginx 后运行 `node tools/check_optimizations_browser.cjs`。该脚本覆盖公开题目、直接文件 replace/merge、分值预览、SPJ 模板、比赛工作区和社区权限状态，不连接用户生产环境。
 
 首次开发遇到的 Go 依赖下载问题已通过正常授权的 HTTPS GET 路径解决，模块包与官方校验记录已锁定。首批全量单元测试、静态检查、构建及竞态检查已通过，也已验证真实 Web 进程在数据库和 Redis 不可用时仍可提供页面、CSRF 与健康检查。具体结果以 [CHANGELOG.md](CHANGELOG.md) 为准。
 
@@ -197,4 +201,4 @@ node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs
 
 后续开发按实施计划推进，每批同步修订日志，保留原始需求及历史数据。
 
-六个批次的实施内容均已落地。原生平台待验项仍按约定保留，后续扩展需另行确定范围。
+六个批次及 `后续优化.md` 中的后续可用性事项已实现并进入用户验收；涉及真实公网 Origin、用户服务器升级和最终操作体验仍以用户现场验收为准。

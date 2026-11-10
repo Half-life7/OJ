@@ -87,6 +87,12 @@ func normalizeInput(input Input) (Input, error) {
 	if !oneOf(input.Status, "draft", "published", "archived") || !oneOf(input.Visibility, "public", "hidden", "contest_only") {
 		return Input{}, ErrInvalid
 	}
+	// "Public" describes the final library visibility. Treating a draft as
+	// public silently produced an object that looked published in the editor but
+	// remained absent from the library, so make that state unambiguous.
+	if input.Visibility == "public" && input.Status == "draft" {
+		input.Status = "published"
+	}
 	if len(input.Tags) > 16 {
 		return Input{}, ErrInvalid
 	}
@@ -440,11 +446,50 @@ func validateDataset(dataset testcase.Dataset) error {
 	return nil
 }
 
-func (s *Service) Import(ctx context.Context, actor Actor, id, revision uint64, dataset testcase.Dataset, requestID string) (DataVersion, error) {
+func mergeDatasets(base, patch testcase.Dataset) (testcase.Dataset, error) {
+	byFold := make(map[string]int, len(base.Cases)+len(patch.Cases))
+	byID := make(map[string]int, len(base.Cases)+len(patch.Cases))
+	merged := append([]testcase.Case(nil), base.Cases...)
+	for i, item := range merged {
+		byFold[strings.ToLower(item.ID)] = i
+		byID[item.ID] = i
+	}
+	for _, item := range patch.Cases {
+		if i, ok := byID[item.ID]; ok {
+			merged[i] = item
+		} else {
+			if _, conflict := byFold[strings.ToLower(item.ID)]; conflict {
+				return testcase.Dataset{}, ErrInvalid
+			}
+			byFold[strings.ToLower(item.ID)] = len(merged)
+			byID[item.ID] = len(merged)
+			merged = append(merged, item)
+		}
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].ID < merged[j].ID })
+	result := testcase.Dataset{Cases: merged}
+	for _, item := range merged {
+		result.TotalBytes += int64(len(item.Input) + len(item.Output))
+		if result.TotalScore > math.MaxInt64-item.Score {
+			return testcase.Dataset{}, ErrInvalid
+		}
+		result.TotalScore += item.Score
+	}
+	result.Digest = testcase.Fingerprint(merged)
+	if err := validateDataset(result); err != nil {
+		return testcase.Dataset{}, err
+	}
+	return result, nil
+}
+
+func (s *Service) Import(ctx context.Context, actor Actor, id, revision uint64, dataset testcase.Dataset, mode, requestID string) (DataVersion, error) {
 	if !admin(actor) {
 		return DataVersion{}, ErrForbidden
 	}
-	if id == 0 || revision == 0 {
+	if mode == "" {
+		mode = ImportReplace
+	}
+	if id == 0 || revision == 0 || mode != ImportReplace && mode != ImportMerge {
 		return DataVersion{}, ErrInvalid
 	}
 	if err := validateDataset(dataset); err != nil {
@@ -464,6 +509,32 @@ func (s *Service) Import(ctx context.Context, actor Actor, id, revision uint64, 
 	}
 	if row.Revision != revision || row.Revision == math.MaxUint64 || row.DataVersion == math.MaxUint64 || row.StatementVersion == 0 {
 		return DataVersion{}, ErrConflict
+	}
+	if mode == ImportMerge {
+		if row.DataVersion == 0 {
+			return DataVersion{}, ErrInvalid
+		}
+		var current struct {
+			StorageKey string `db:"storage_key"`
+			Digest     string `db:"digest"`
+			CaseCount  int    `db:"case_count"`
+			TotalBytes int64  `db:"total_bytes"`
+			TotalScore int64  `db:"total_score"`
+		}
+		if err = tx.GetContext(ctx, &current, `SELECT storage_key,digest,case_count,total_bytes,total_score FROM problem_data_versions WHERE problem_id=? AND data_version=?`, id, row.DataVersion); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return DataVersion{}, ErrUnavailable
+			}
+			return DataVersion{}, s.unavailable("import_current", err)
+		}
+		base, readErr := s.data.Read(ctx, current.StorageKey)
+		if readErr != nil || len(base.Cases) != current.CaseCount || base.TotalBytes != current.TotalBytes || base.TotalScore != current.TotalScore || hex.EncodeToString(base.Digest[:]) != current.Digest {
+			return DataVersion{}, s.unavailable("import_current_files", readErr)
+		}
+		dataset, err = mergeDatasets(base, dataset)
+		if err != nil {
+			return DataVersion{}, err
+		}
 	}
 	var judging Input
 	if json.Unmarshal(row.Snapshot, &judging) != nil {
@@ -508,7 +579,11 @@ func (s *Service) Import(ctx context.Context, actor Actor, id, revision uint64, 
 	if count, err := res.RowsAffected(); err != nil || count != 1 {
 		return DataVersion{}, ErrConflict
 	}
-	if err = audit(ctx, tx, actor, "problem.data_import", id, requestID, now); err != nil {
+	action := "problem.data_import"
+	if mode == ImportMerge {
+		action = "problem.data_merge"
+	}
+	if err = audit(ctx, tx, actor, action, id, requestID, now); err != nil {
 		return DataVersion{}, s.unavailable("import_audit", err)
 	}
 	if err = tx.Commit(); err != nil {

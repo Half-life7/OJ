@@ -94,3 +94,21 @@ func TestRevokeContestAdminAfterSettlement(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestManageOptionsSearchIsScopedToAuthorizedManager(t *testing.T) {
+	s, m := fixture(t)
+	now := s.now()
+	m.ExpectBegin()
+	m.ExpectQuery("SELECT .* FROM contests WHERE id=\\?").WithArgs(uint64(5)).WillReturnRows(sqlmock.NewRows([]string{"id", "title", "scoring_mode", "enrollment_policy", "approval_required", "team_mode", "starts_at", "ends_at", "revision", "settled_at"}).AddRow(5, "Final", "OI", "admin_add", false, true, now.Add(time.Hour), now.Add(2*time.Hour), 1, nil))
+	m.ExpectQuery("SELECT u.id,u.username,u.account_type,p.display_name,p.student_no").WithArgs("%42%", "%42%", "%42%").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "account_type", "display_name", "student_no"}).AddRow(42, "user42", "permanent", "User 42", "S42"))
+	m.ExpectQuery("SELECT u.id,u.username,u.account_type,p.display_name,p.student_no FROM contest_admins").WithArgs(uint64(5)).WillReturnRows(sqlmock.NewRows([]string{"id", "username", "account_type", "display_name", "student_no"}).AddRow(9, "manager", "permanent", "Manager", nil))
+	m.ExpectQuery("SELECT p.id,p.title,p.statement_version,p.data_version FROM problems").WithArgs(uint64(42), "%42%").WillReturnRows(sqlmock.NewRows([]string{"id", "title", "statement_version", "data_version"}).AddRow(42, "Problem 42", 3, 2))
+	m.ExpectCommit()
+	result, err := s.ManageOptions(context.Background(), auth.User{ID: 1, AccountType: "permanent", GlobalRole: "super_admin"}, 5, "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Users) != 1 || result.Users[0].ID != 42 || len(result.Admins) != 1 || len(result.Problems) != 1 || result.Problems[0].DataVersion != 2 {
+		t.Fatalf("unexpected options: %+v", result)
+	}
+}

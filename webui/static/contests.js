@@ -1,114 +1,811 @@
 "use strict";
 (() => {
- const page=document.body.dataset.page;
- if(!["contests","identities"].includes(page))return;
- const $=id=>document.getElementById(id); let selected=0,view=null,after=0,importToken="";
- const message=text=>{$("contest-message").textContent=text;};
- let serverClockOffset=0;
- const createForm=page==="contests"?$("contest-create-form"):null;
- function localTime(date){return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16);}
- function clearCreateErrors(){
-  if(!createForm)return;
-  for(const field of createForm.elements){field.removeAttribute("aria-invalid");field.setCustomValidity?.("");}
-  $("contest-form-error").hidden=true;
- }
- function createErrors(fields){
-  const messages=Object.values(fields);
-  for(const [name,error] of Object.entries(fields)){const field=createForm.elements.namedItem(name);if(field){field.setAttribute("aria-invalid","true");field.setCustomValidity(error);}}
-  $("contest-form-error").textContent=messages.join("；");$("contest-form-error").hidden=false;
-  const first=createForm.querySelector('[aria-invalid="true"]');first?.focus();
- }
- function calculatedEnd(){const f=createForm.elements;return f.end_mode.value==="duration"?new Date(new Date(f.starts_at.value).getTime()+Number(f.duration_minutes.value)*60000):new Date(f.ends_at.value);}
- function previewEnd(){
-  const f=createForm.elements,auto=f.end_mode.value==="duration",start=new Date(f.starts_at.value),minutes=Number(f.duration_minutes.value);
-  f.ends_at.readOnly=auto;f.duration_minutes.disabled=!auto;$("contest-duration-label").hidden=!auto;
-  if(auto){const end=new Date(start.getTime()+minutes*60000);f.ends_at.value=Number.isFinite(start.getTime())&&Number.isInteger(minutes)&&minutes>0&&minutes<=43200&&end.getFullYear()<=9999?localTime(end):"";}
-  const end=calculatedEnd();
-  $("contest-end-preview").textContent=Number.isFinite(end.getTime())?`预计结束：${end.toLocaleString()}；实际时长 ${(end-start)/60000} 分钟。`:"填写开始时间和有效时长后，自动显示结束时间。";
- }
- function contestInput(d){
-  clearCreateErrors();previewEnd();
-  const f=createForm.elements,start=new Date(f.starts_at.value),end=calculatedEnd(),fields={};
-  if(!d.title.trim()||Array.from(d.title.trim()).length>200)fields.title="比赛名称需为 1～200 个字符";
-  if(!Number.isFinite(start.getTime()))fields.starts_at="请填写有效开始时间";
-  else if(start.getTime()<=Date.now()+serverClockOffset)fields.starts_at="开始时间必须晚于服务器当前时间，请至少预留几分钟";
-  if(f.end_mode.value==="duration"&&(!Number.isInteger(Number(f.duration_minutes.value))||Number(f.duration_minutes.value)<=0||Number(f.duration_minutes.value)>43200))fields.duration_minutes="持续时间需为 1～43200 的整数分钟";
-  if(!Number.isFinite(end.getTime())||end<=start||end.getFullYear()>9999)fields.ends_at="结束时间必须晚于开始时间，且年份不能超过 9999";
-  else if(end-start>30*86400000)fields.ends_at="比赛持续时间不能超过 30 天";
-  if(Object.keys(fields).length){createErrors(fields);throw Error(Object.values(fields).join("；"));}
-  // Only API fields are serialized. Duration/mode/edit controls stay local.
-  return {title:d.title.trim(),scoring_mode:d.scoring_mode,enrollment_policy:d.enrollment_policy,starts_at:start.toISOString(),ends_at:end.toISOString(),approval_required:f.approval_required.checked,team_mode:f.team_mode.checked};
- }
- async function api(path,method="GET",data){
-  const headers={Accept:"application/json"};
-  if(method!=="GET"){const csrf=await api("/api/auth/csrf");headers["X-CSRF-Token"]=csrf.csrf_token;headers["Content-Type"]="application/json";}
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
-  try{const r=await fetch(path,{method,headers,credentials:"same-origin",cache:"no-store",signal:controller.signal,body:data===undefined?undefined:JSON.stringify(data)});const clock=Date.parse(r.headers.get("Date"));if(Number.isFinite(clock))serverClockOffset=clock-Date.now();const b=await r.json();if(!r.ok||b.code){const error=Error(b.message||"请求失败");error.status=r.status;error.fields=b.data?.fields;throw error;}return b.data;}finally{clearTimeout(timer);}
- }
- function run(button,fn){button.disabled=true;message("正在处理…");return Promise.resolve().then(fn).then(()=>message("操作完成")).catch(e=>message(e.name==="AbortError"?"请求超时，请刷新状态后重试":e.message)).finally(()=>{button.disabled=false;});}
- function form(id,fn){let pending=false;$(id).addEventListener("submit",e=>{e.preventDefault();if(pending)return;const data=Object.fromEntries(new FormData(e.target));pending=true;run(e.submitter||e.target.querySelector("button"),()=>fn(data)).finally(()=>{pending=false;});});}
- function text(tag,value){const el=document.createElement(tag);el.textContent=String(value??"");return el;}
- function renderRoster(){const target=$("contest-roster");target.replaceChildren();if(!view)return;const q=$("contest-search").value.toLowerCase();for(const t of view.teams){const row=view.standings.find(r=>r.team_id===t.id);const members=view.members.filter(m=>m.team_id===t.id).map(m=>{const i=m.identity;return `${i.Username} (#${m.user_id}) / ${i.Name} / ${i.Student||"—"} / ${i.StudentStatus} / ${i.Organization||"—"} / ${i.Kind}`;}).join("; ");if(q&&!`${t.name} ${members}`.toLowerCase().includes(q))continue;if($("contest-filter-type").value&&t.participant_type!==$("contest-filter-type").value)continue;if($("contest-filter-status").value&&t.status!==$("contest-filter-status").value)continue;if((row?.submissions||0)<Number($("contest-filter-submissions").value||0))continue;if($("contest-filter-account").value&&!view.members.some(m=>m.team_id===t.id&&m.identity.Kind===$("contest-filter-account").value))continue;const tr=document.createElement("tr");for(const value of [row?.rank||"—",`${t.name} (#${t.id})`,members,`${t.participant_type} / ${t.status}`,row?.submissions||0,row?.solved||0,row?.score||0,row?.penalty||0,Object.entries(row?.problems||{}).map(([id,p])=>`${id}: ${p.score}`).join(" / ")])tr.append(text("td",value));target.append(tr);}}
- async function loadDetail(id){selected=id;view=await api(`/api/contests/${id}`);const c=view.contest;$("contest-detail").hidden=false;$("contest-title").textContent=c.title;$("contest-info").textContent=`${c.scoring_mode} · ${new Date(c.starts_at).toLocaleString()} — ${new Date(c.ends_at).toLocaleString()} · ${c.settled_at?"已结算":"未结算"} ${view.frozen?(view.manager?"已封榜（管理员实时榜）":"已封榜"):""}`;$("contest-export").href=`/api/contests/${selected}/export.csv`;$("contest-manage").hidden=!view.manager;if(view.manager)$("contest-create").hidden=false;$("contest-enroll").hidden=c.enrollment_policy!=="open"||c.team_mode;$("contest-problems").replaceChildren();$("contest-problem-select").replaceChildren();for(const p of view.problems){const article=document.createElement("article");article.append(text("h3",`${p.problem_id}. ${p.statement.title||"题目"}`));for(const [key,label]of [["description","题面"],["input_format","输入"],["output_format","输出"],["sample_input","样例输入"],["sample_output","样例输出"]]){if(p.statement[key]){article.append(text("h4",label),text("pre",p.statement[key]));}}$("contest-problems").append(article);const option=text("option",`${p.problem_id}. ${p.statement.title||"题目"}`);option.value=p.problem_id;$("contest-problem-select").append(option);}contestLanguageControls();renderRoster();}
- function contestLanguageControls(){if(!view)return;const id=Number($("contest-problem-select").value);const p=view.problems.find(p=>p.problem_id===id);const output=p?.statement.problem_type==="output_only";const language=$("contest-submit-form").elements.language;for(const option of language.options)option.disabled=output?option.value!=="text":option.value==="text";if(language.selectedOptions[0]?.disabled)language.value=output?"text":"cpp17";$("contest-submit-form").elements.source_code.placeholder=output?JSON.stringify(Object.fromEntries((p.output_cases||[]).map(id=>[id,""])),null,2):"";}
- async function list(){const items=await api(`/api/contests?after=${after}`);for(const c of items){const button=text("button",`${c.title} · ${c.scoring_mode} · ${new Date(c.starts_at).toLocaleString()}`);button.type="button";button.className="button secondary";button.addEventListener("click",()=>run(button,()=>loadDetail(c.id)));$("contest-list").append(button);after=c.id;}$("contest-more").hidden=items.length<100;}
- if(page==="contests"){
-  $("contest-problem-select").onchange=contestLanguageControls;
-  $("contest-more").onclick=e=>run(e.target,list);$("contest-refresh").onclick=e=>run(e.target,()=>loadDetail(selected));$("contest-search").oninput=renderRoster;for(const id of ["contest-filter-type","contest-filter-status","contest-filter-account","contest-filter-submissions"])$(id).oninput=renderRoster;
-  $("contest-enroll").onclick=e=>run(e.target,async()=>{await api(`/api/contests/${selected}/enroll`,"POST",{});await loadDetail(selected);});
-  $("contest-settle").onclick=e=>run(e.target,async()=>{await api(`/api/contests/${selected}/settle`,"POST",{});await loadDetail(selected);});
-  $("contest-time-help").textContent=`当前浏览器时区：${Intl.DateTimeFormat().resolvedOptions().timeZone}。开始时间须晚于服务器当前时间，结束时间须晚于开始，最长 30 天。`;
-  createForm.elements.starts_at.value=localTime(new Date(Date.now()+15*60000));
-  createForm.addEventListener("input",()=>{clearCreateErrors();previewEnd();});
-  createForm.addEventListener("change",()=>{clearCreateErrors();previewEnd();});
-  previewEnd();
-  let lastCreation=null;
-  try{lastCreation=JSON.parse(sessionStorage.getItem("biue-contest-creation")||"null");}catch{}
-  function rememberCreation(value){lastCreation=value;try{if(value)sessionStorage.setItem("biue-contest-creation",JSON.stringify(value));else sessionStorage.removeItem("biue-contest-creation");}catch{}}
-  form("contest-create-form",async d=>{
-   const input=contestInput(d),editing=createForm.elements.edit_current.checked;
-   if(editing){if(!view)throw Error("请先选择比赛");input.revision=view.contest.revision;}
-   const key=JSON.stringify(input);
-   if(!editing&&lastCreation?.key===key){
-    if(lastCreation.id){await loadDetail(lastCreation.id);return;}
-    if(!window.confirm("上次创建结果尚未确认。请先检查比赛列表，确认没有创建成功后再重试，以免重复创建。已核对并仍要重试？"))throw Error("已保留表单，请先核对比赛列表。");
-   }
-   if(!editing)rememberCreation({key});
-   try{
-    const c=await api(editing?`/api/contests/${view.contest.id}`:"/api/contests",editing?"PUT":"POST",input);
-    if(!editing)rememberCreation({key,id:c.id});
-    await loadDetail(c.id);
-   }catch(error){
-    if(error.fields)createErrors(error.fields);
-    if(!editing&&error.status>=400&&error.status<500&&!lastCreation?.id)rememberCreation(null);
-    if(!editing&&!error.status)error.message+="；请先核对比赛列表，勿直接重复创建。";
-    throw error;
-   }
-  });
-  $("contest-edit-current").onchange=e=>{
-   if(e.target.checked&&!view){e.target.checked=false;message("请先选择比赛，再编辑。");return;}
-   createForm.querySelector('button[type="submit"]').textContent=e.target.checked?"保存比赛修改":"创建比赛";
-   createForm.elements.team_mode.disabled=e.target.checked;
-   if(!e.target.checked)return;
-   for(const [k,v]of Object.entries(view.contest)){const field=createForm.elements.namedItem(k);if(!field)continue;if(field.type==="checkbox")field.checked=!!v;else if(field.type==="datetime-local")field.value=localTime(new Date(v));else field.value=v;}
-   const minutes=(new Date(view.contest.ends_at)-new Date(view.contest.starts_at))/60000;
-   createForm.elements.duration_minutes.value=minutes;
-   createForm.elements.end_mode.value=Number.isInteger(minutes)?"duration":"manual";
-   clearCreateErrors();previewEnd();
+  const page = document.body.dataset.page;
+  if (!["contests", "identities"].includes(page)) return;
+  const byID = (id) => document.getElementById(id);
+  const node = (tag, value, className) => {
+    const element = document.createElement(tag);
+    if (value !== undefined && value !== null) element.textContent = String(value);
+    if (className) element.className = className;
+    return element;
   };
-  form("contest-history-form",async d=>{const records=await api(`/api/contests/${selected}/submissions?user_id=${encodeURIComponent(d.user_id)}`);$("contest-history").replaceChildren();for(const s of records){const a=text("a",`#${s.id} · ${s.kind} · ${s.status} · ${s.score} 分`);a.href=`/submissions/${s.id}`;const p=document.createElement("p");p.append(a);$("contest-history").append(p);}});
-  form("contest-manage-form",async d=>{for(const k of ["problem_id","user_id","team_id"])d[k]=Number(d[k]||0);d.team_ids=d.team_ids.trim()?d.team_ids.split(",").map(v=>Number(v.trim())):[];d.members=d.members.trim()?d.members.split(",").map(v=>Number(v.trim())):[];await api(`/api/contests/${selected}/manage`,"POST",d);await loadDetail(selected);});
-  $("contest-csv-file").onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>256*1024){message("CSV 最多 256 KiB");return;}$("contest-csv-form").elements.csv.value=await file.text();};
-  form("contest-csv-form",async d=>{importToken="";$("contest-csv-confirm").disabled=true;const preview=await api(`/api/contests/${selected}/csv/preview`,"POST",d);$("contest-csv-preview").replaceChildren();for(const row of preview.rows)$("contest-csv-preview").append(text("p",`第 ${row.line} 行 · ${row.username} · ${row.team} · ${row.participant_type} · ${row.error||"可导入"}`));importToken=preview.token;$("contest-csv-confirm").disabled=!preview.valid;});
-  $("contest-csv-confirm").onclick=e=>run(e.target,async()=>{await api(`/api/contests/${selected}/csv/confirm`,"POST",{token:importToken});importToken="";await loadDetail(selected);}).finally(()=>{$("contest-csv-confirm").disabled=!importToken;});
-  form("contest-temporary-form",async d=>{await api(`/api/contests/${selected}/temporary-accounts`,"POST",d);$("contest-temporary-form").reset();await loadDetail(selected);});
-  form("contest-submit-form",async d=>{d.contest_id=selected;d.problem_id=Number(d.problem_id);const s=await api("/api/submissions","POST",d);const link=text("a",`查看提交 #${s.id}`);link.href=`/submissions/${s.id}`;$("contest-submission-result").replaceChildren(link);});
-  Promise.all([api("/api/users/me"),list()]).then(([u])=>{$("contest-create").hidden=u.global_role!=="super_admin";message("请选择比赛");}).catch(e=>message(e.message));
- }else{
-  async function people(){const rows=await api(`/api/admin/persons?after=${after}`);for(const p of rows){const button=text("button",`#${p.id} ${p.display_name} · ${p.student_no||"无学号"} · ${p.student_no_status} · 修订 ${p.revision} · ${(p.accounts||[]).map(a=>`${a.username} (#${a.id})`).join(", ")}`);button.type="button";button.onclick=()=>{for(const [k,v]of Object.entries(p)){const input=$("identity-form").elements.namedItem(k);if(input)input.value=v??"";}};$("identity-list").append(button);after=p.id;}$("identity-more").hidden=rows.length<100;}
-  $("identity-more").onclick=e=>run(e.target,people);
-  form("identity-form",async d=>{const id=Number(d.id);delete d.id;d.revision=Number(d.revision);d.student_no=d.student_no||null;await api(`/api/admin/persons/${id}`,"PUT",d);after=0;$("identity-list").replaceChildren();await people();});
-  form("identity-link-form",async d=>{for(const k of ["user_id","from_person_id","to_person_id"])d[k]=Number(d[k]);await api("/api/admin/identity-links","POST",d);});
-  people().then(()=>message("请选择需要审核的身份")).catch(e=>message(e.message));
- }
+  const message = (id, value, success = false) => {
+    const element = byID(id);
+    if (!element) return;
+    element.textContent = value || "";
+    element.classList.toggle("success", success);
+    element.hidden = !value;
+  };
+  const date = (value) => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.valueOf()) ? "—" : parsed.toLocaleString();
+  };
+  const localTime = (value) => {
+    const parsed = new Date(value);
+    return new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  class APIError extends Error {
+    constructor(value, status, fields, requestID) {
+      super(value);
+      this.status = status;
+      this.fields = fields;
+      this.requestID = requestID;
+    }
+  }
+
+  let csrfToken = "";
+  let serverClockOffset = 0;
+  async function api(path, method = "GET", data) {
+    if (method !== "GET" && !csrfToken) {
+      const token = await api("/api/auth/csrf");
+      csrfToken = token?.csrf_token || "";
+      if (!csrfToken) throw new APIError("无法验证当前页面，请刷新后重试。", 403);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    const headers = { Accept: "application/json" };
+    if (method !== "GET") {
+      headers["Content-Type"] = "application/json";
+      headers["X-CSRF-Token"] = csrfToken;
+    }
+    try {
+      const response = await fetch(path, {
+        method, headers, credentials: "same-origin", cache: "no-store", signal: controller.signal,
+        body: data === undefined ? undefined : JSON.stringify(data),
+      });
+      const clock = Date.parse(response.headers?.get?.("Date"));
+      if (Number.isFinite(clock)) serverClockOffset = clock - Date.now();
+      let result = null;
+      try { result = await response.json(); } catch {
+        throw new APIError(response.status === 413 ? "上传内容超过大小限制。" : "服务暂时无法响应，请稍后重试。", response.status);
+      }
+      if (!response.ok || result.code) {
+        if (response.status === 403) csrfToken = "";
+        const requestID = response.headers?.get?.("X-Request-ID") || "";
+        const suffix = requestID ? `（请求 ID：${requestID}）` : "";
+        throw new APIError((result.message || (response.status === 409 ? "状态已变化，请刷新后重试。" : "操作未完成，请稍后重试。")) + suffix, response.status, result.data?.fields, requestID);
+      }
+      return result.data;
+    } catch (error) {
+      if (error instanceof APIError) throw error;
+      throw new APIError(error.name === "AbortError" ? "请求超时。写操作请先刷新核对结果，再决定是否重试。" : "网络连接失败，请检查网络后重试。", 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function run(button, fn, target = "contest-message") {
+    if (button) button.disabled = true;
+    message(target, "正在处理…", true);
+    try {
+      await fn();
+    } catch (error) {
+      message(target, error.message);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  if (page === "identities") {
+    let cursor = 0;
+    async function people() {
+      const rows = await api(`/api/admin/persons?after=${cursor}`);
+      for (const person of rows) {
+        const button = node("button", `#${person.id} ${person.display_name} · ${person.student_no || "无学号"} · ${person.student_no_status} · 修订 ${person.revision} · ${(person.accounts || []).map((account) => `${account.username} (#${account.id})`).join(", ")}`);
+        button.type = "button";
+        button.onclick = () => {
+          for (const [key, value] of Object.entries(person)) {
+            const input = byID("identity-form").elements.namedItem(key);
+            if (input) input.value = value ?? "";
+          }
+        };
+        byID("identity-list").append(button);
+        cursor = person.id;
+      }
+      byID("identity-more").hidden = rows.length < 100;
+    }
+    byID("identity-more").onclick = (event) => run(event.target, people);
+    byID("identity-form").onsubmit = (event) => {
+      event.preventDefault();
+      run(event.submitter || event.target.querySelector("button"), async () => {
+        const data = Object.fromEntries(new FormData(event.target));
+        const id = Number(data.id);
+        delete data.id;
+        data.revision = Number(data.revision);
+        data.student_no = data.student_no || null;
+        await api(`/api/admin/persons/${id}`, "PUT", data);
+        cursor = 0;
+        byID("identity-list").replaceChildren();
+        await people();
+        message("contest-message", "身份修改已保存并记录审计。", true);
+      });
+    };
+    byID("identity-link-form").onsubmit = (event) => {
+      event.preventDefault();
+      run(event.submitter || event.target.querySelector("button"), async () => {
+        const data = Object.fromEntries(new FormData(event.target));
+        for (const key of ["user_id", "from_person_id", "to_person_id"]) data[key] = Number(data[key]);
+        await api("/api/admin/identity-links", "POST", data);
+        message("contest-message", "账号身份关联已保存；既有比赛快照保持不变。", true);
+      });
+    };
+    people().then(() => message("contest-message", "请选择需要审核的身份。")).catch((error) => message("contest-message", error.message));
+    return;
+  }
+
+  const createForm = byID("contest-create-form");
+  const createFields = () => [...createForm.elements].filter((field) => field.name !== "edit_current");
+  let user = null;
+  let selected = null;
+  let view = null;
+  let listAfter = 0;
+  let detailEpoch = 0;
+  let manageEpoch = 0;
+  let csvState = null;
+  let csvEpoch = 0;
+  let activePanel = "overview";
+  let dirty = false;
+  let savedSnapshot = "";
+  let detailLoading = false;
+  let editingMode = false;
+  let lastCreation = null;
+  try { lastCreation = JSON.parse(sessionStorage.getItem("biue-contest-creation-v2") || "null"); } catch {}
+  function rememberCreation(value) {
+    lastCreation = value;
+    try {
+      if (value) sessionStorage.setItem("biue-contest-creation-v2", JSON.stringify(value));
+      else sessionStorage.removeItem("biue-contest-creation-v2");
+    } catch {}
+  }
+
+  function formSnapshot() {
+    return JSON.stringify([createForm.elements.edit_current.checked ? selected?.id || 0 : 0, ...createFields().map((field) => field.type === "checkbox" ? field.checked : field.value)]);
+  }
+  function markDirty() {
+    dirty = formSnapshot() !== savedSnapshot;
+    persistDraft();
+  }
+  function draftKey() {
+    return createForm.elements.edit_current.checked && selected ? `contest-edit-${selected.id}` : "contest-create";
+  }
+  function persistDraft() {
+    try {
+      const values = {};
+      for (const field of createFields()) if (field.type !== "password") values[field.name] = field.type === "checkbox" ? field.checked : field.value;
+      sessionStorage.setItem(`biue-draft-${draftKey()}`, JSON.stringify(values));
+    } catch {}
+  }
+  function restoreDraft() {
+    try {
+      const values = JSON.parse(sessionStorage.getItem(`biue-draft-${draftKey()}`) || "null");
+      if (!values) return false;
+      for (const [name, value] of Object.entries(values)) {
+        const field = createForm.elements.namedItem(name);
+        if (!field || field.type === "password") continue;
+        if (field.type === "checkbox") field.checked = !!value;
+        else field.value = value;
+      }
+      return true;
+    } catch { return false; }
+  }
+  function clearDraft() {
+    try { sessionStorage.removeItem(`biue-draft-${draftKey()}`); } catch {}
+  }
+  function mayDiscard() {
+    return !dirty || window.confirm("当前比赛设置尚未保存。离开会保留一份本标签页草稿；是否继续？");
+  }
+  function clearCreateErrors() {
+    for (const field of createForm.elements) {
+      field.removeAttribute?.("aria-invalid");
+      field.setCustomValidity?.("");
+    }
+    byID("contest-form-error").hidden = true;
+  }
+  function createErrors(fields) {
+    const errors = Object.values(fields);
+    for (const [name, error] of Object.entries(fields)) {
+      const field = createForm.elements.namedItem(name);
+      if (field) {
+        field.setAttribute("aria-invalid", "true");
+        field.setCustomValidity(error);
+      }
+    }
+    byID("contest-form-error").textContent = errors.join("；");
+    byID("contest-form-error").hidden = false;
+    createForm.querySelector('[aria-invalid="true"]')?.focus();
+  }
+  function calculatedEnd() {
+    const fields = createForm.elements;
+    return fields.end_mode.value === "duration"
+      ? new Date(new Date(fields.starts_at.value).getTime() + Number(fields.duration_minutes.value) * 60000)
+      : new Date(fields.ends_at.value);
+  }
+  function previewEnd() {
+    const fields = createForm.elements;
+    const automatic = fields.end_mode.value === "duration";
+    const start = new Date(fields.starts_at.value);
+    const minutes = Number(fields.duration_minutes.value);
+    fields.ends_at.readOnly = automatic;
+    fields.duration_minutes.disabled = !automatic;
+    byID("contest-duration-label").hidden = !automatic;
+    if (automatic) {
+      const end = new Date(start.getTime() + minutes * 60000);
+      fields.ends_at.value = Number.isFinite(start.getTime()) && Number.isInteger(minutes) && minutes > 0 && minutes <= 43200 && end.getFullYear() <= 9999 ? localTime(end) : "";
+    }
+    const end = calculatedEnd();
+    byID("contest-end-preview").textContent = Number.isFinite(end.getTime())
+      ? `预计结束：${end.toLocaleString()}；实际时长 ${(end - start) / 60000} 分钟。`
+      : "填写开始时间和有效时长后，自动显示结束时间。";
+  }
+  function contestInput() {
+    clearCreateErrors();
+    previewEnd();
+    const fields = createForm.elements;
+    const data = Object.fromEntries(new FormData(createForm));
+    const start = new Date(fields.starts_at.value);
+    const end = calculatedEnd();
+    const errors = {};
+    if (!data.title.trim() || Array.from(data.title.trim()).length > 200) errors.title = "比赛名称需为 1～200 个字符";
+    if (!Number.isFinite(start.getTime())) errors.starts_at = "请填写有效开始时间";
+    else if (start.getTime() <= Date.now() + serverClockOffset) errors.starts_at = "开始时间必须晚于服务器当前时间，请至少预留几分钟";
+    if (fields.end_mode.value === "duration" && (!Number.isInteger(Number(fields.duration_minutes.value)) || Number(fields.duration_minutes.value) <= 0 || Number(fields.duration_minutes.value) > 43200)) errors.duration_minutes = "持续时间需为 1～43200 的整数分钟";
+    if (!Number.isFinite(end.getTime()) || end <= start || end.getFullYear() > 9999) errors.ends_at = "结束时间必须晚于开始时间，且年份不能超过 9999";
+    else if (end - start > 30 * 86400000) errors.ends_at = "比赛持续时间不能超过 30 天";
+    if (Object.keys(errors).length) {
+      createErrors(errors);
+      throw new APIError(Object.values(errors).join("；"), 400);
+    }
+    const input = {
+      title: data.title.trim(), scoring_mode: data.scoring_mode, enrollment_policy: data.enrollment_policy,
+      starts_at: start.toISOString(), ends_at: end.toISOString(),
+      approval_required: fields.approval_required.checked, team_mode: fields.team_mode.checked,
+    };
+    if (fields.edit_current.checked) {
+      if (!selected) throw new APIError("请先打开要编辑的比赛。", 400);
+      input.revision = selected.revision;
+    }
+    return input;
+  }
+
+  function showCenter() {
+    activePanel = "overview";
+    byID("contest-detail").hidden = true;
+    byID("contest-center").hidden = false;
+    document.title = "比赛中心 · Biue OJ";
+  }
+  function setDetailBusy(busy) {
+    for (const id of ["contest-submit-form", "contest-manage-form", "contest-csv-form", "contest-temporary-form", "contest-history-form"]) {
+      const form = byID(id);
+      for (const field of form.elements) field.disabled = busy;
+    }
+    for (const id of ["contest-enroll", "contest-refresh", "contest-settle", "contest-csv-file", "contest-csv-confirm"]) byID(id).disabled = busy;
+  }
+  function showCreate() {
+    if (!user || user.global_role !== "super_admin" || user.account_type !== "permanent") {
+      message("contest-message", "当前账号没有创建比赛权限。");
+      return;
+    }
+    byID("contest-create").hidden = false;
+    byID("contest-create").scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }
+  function switchPanel(name) {
+    if (!view) return;
+    if (!view.manager && ["manage", "import", "accounts", "settle"].includes(name)) name = "overview";
+    activePanel = name;
+    for (const button of document.querySelectorAll("[data-contest-panel]")) button.classList.toggle("active", button.dataset.contestPanel === name);
+    for (const section of document.querySelectorAll("[data-contest-panel-content]")) section.hidden = section.dataset.contestPanelContent !== name;
+    if (name === "manage") loadManageOptions().catch((error) => message("contest-detail-message", error.message));
+    if (name === "settle") renderSettleTarget();
+  }
+  function renderOverview(contest) {
+    const target = byID("contest-overview");
+    target.replaceChildren();
+    for (const [label, value] of [
+      ["比赛编号", `#${contest.id}`], ["计分模式", contest.scoring_mode], ["报名方式", contest.enrollment_policy],
+      ["开始", date(contest.starts_at)], ["结束", date(contest.ends_at)],
+      ["报名审核", contest.approval_required ? "需要管理员审核" : "自动通过"], ["队伍模式", contest.team_mode ? "团队赛" : "个人赛"],
+      ["状态", contest.settled_at ? `已结算 · ${date(contest.settled_at)}` : new Date(contest.starts_at) > new Date() ? "赛前" : new Date(contest.ends_at) <= new Date() ? "已结束，待结算" : "进行中"],
+    ]) {
+      const row = node("div", undefined, "contest-overview-row");
+      row.append(node("dt", label), node("dd", value));
+      target.append(row);
+    }
+  }
+  function renderRoster() {
+    const target = byID("contest-roster");
+    target.replaceChildren();
+    if (!view) return;
+    const query = byID("contest-search").value.toLowerCase();
+    for (const team of view.teams) {
+      const row = view.standings.find((entry) => entry.team_id === team.id);
+      const members = view.members.filter((member) => member.team_id === team.id).map((member) => {
+        const identity = member.identity;
+        return `${identity.Username} (#${member.user_id}) / ${identity.Name} / ${identity.Student || "—"} / ${identity.StudentStatus} / ${identity.Organization || "—"} / ${identity.Kind}`;
+      }).join("; ");
+      if (query && !`${team.name} ${members}`.toLowerCase().includes(query)) continue;
+      if (byID("contest-filter-type").value && team.participant_type !== byID("contest-filter-type").value) continue;
+      if (byID("contest-filter-status").value && team.status !== byID("contest-filter-status").value) continue;
+      if ((row?.submissions || 0) < Number(byID("contest-filter-submissions").value || 0)) continue;
+      if (byID("contest-filter-account").value && !view.members.some((member) => member.team_id === team.id && member.identity.Kind === byID("contest-filter-account").value)) continue;
+      const tr = node("tr");
+      for (const value of [row?.rank || "—", `${team.name} (#${team.id})`, members, `${team.participant_type} / ${team.status}`, row?.submissions || 0, row?.solved || 0, row?.score || 0, row?.penalty || 0, Object.entries(row?.problems || {}).map(([id, point]) => `${id}: ${point.score}`).join(" / ")]) tr.append(node("td", value));
+      target.append(tr);
+    }
+  }
+  function contestLanguageControls() {
+    if (!view) return;
+    const id = Number(byID("contest-problem-select").value);
+    const problem = view.problems.find((item) => item.problem_id === id);
+    const outputOnly = problem?.statement.problem_type === "output_only";
+    const language = byID("contest-submit-form").elements.language;
+    for (const option of language.options) option.disabled = outputOnly ? option.value !== "text" : option.value === "text";
+    if (language.selectedOptions[0]?.disabled) language.value = outputOnly ? "text" : "cpp17";
+    byID("contest-submit-form").elements.source_code.placeholder = outputOnly
+      ? JSON.stringify(Object.fromEntries((problem.output_cases || []).map((caseID) => [caseID, ""])), null, 2)
+      : "";
+  }
+  function renderDetail() {
+    const contest = view.contest;
+    document.title = `${contest.title} · Biue OJ`;
+    byID("contest-title").textContent = contest.title;
+    byID("contest-info").textContent = `#${contest.id} · ${contest.scoring_mode} · ${date(contest.starts_at)} — ${date(contest.ends_at)}`;
+    byID("contest-export").href = `/api/contests/${contest.id}/export.csv`;
+    for (const item of document.querySelectorAll("[data-contest-manager]")) item.hidden = !view.manager;
+    const enrollAvailable = contest.enrollment_policy === "open" && !contest.team_mode && !contest.settled_at && new Date(contest.starts_at) > new Date();
+    byID("contest-enroll").hidden = !enrollAvailable;
+    renderOverview(contest);
+    byID("contest-problems").replaceChildren();
+    byID("contest-problem-select").replaceChildren();
+    for (const problem of view.problems) {
+      const article = node("article", undefined, "contest-problem-card");
+      article.append(node("h3", `${problem.problem_id}. ${problem.statement.title || "题目"}`));
+      for (const [key, label] of [["description", "题面"], ["input_format", "输入"], ["output_format", "输出"], ["sample_input", "样例输入"], ["sample_output", "样例输出"]]) {
+        if (problem.statement[key]) article.append(node("h4", label), node("pre", problem.statement[key]));
+      }
+      byID("contest-problems").append(article);
+      const option = node("option", `${problem.problem_id}. ${problem.statement.title || "题目"}`);
+      option.value = problem.problem_id;
+      byID("contest-problem-select").append(option);
+    }
+    contestLanguageControls();
+    renderRoster();
+    const teamIDs = new Set(view.teams.filter((team) => view.members.some((member) => member.team_id === team.id && member.user_id === user?.id)).map((team) => team.id));
+    byID("contest-my-status").textContent = teamIDs.size
+      ? `你在本比赛中的身份：${view.teams.filter((team) => teamIDs.has(team.id)).map((team) => `${team.name}（${team.participant_type} / ${team.status}）`).join("，")}`
+      : contest.team_mode ? "本比赛为管理员组队；如名单没有你，请联系比赛管理员。" : "当前账号尚未报名。";
+    byID("contest-identity-link").href = view.manager ? "/admin/identities" : "/me";
+    switchPanel(activePanel);
+  }
+  async function loadDetail(id) {
+    if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw new APIError("比赛编号无效。", 400);
+    const sequence = ++detailEpoch;
+    detailLoading = true;
+    setDetailBusy(true);
+    for (const button of document.querySelectorAll(".contest-nav-item")) button.disabled = true;
+    byID("contest-detail").hidden = false;
+    byID("contest-center").hidden = true;
+    byID("contest-title").textContent = `比赛 #${id}`;
+    message("contest-detail-message", "正在读取比赛详情…", true);
+    invalidateCSV("切换比赛后，请重新生成 CSV 预览。");
+    try {
+      const result = await api(`/api/contests/${encodeURIComponent(id)}`);
+      if (sequence !== detailEpoch || result.contest.id !== Number(id)) return null;
+      view = result;
+      selected = result.contest;
+      byID("contest-detail-message").hidden = true;
+      renderDetail();
+      return result;
+    } catch (error) {
+      if (sequence === detailEpoch) {
+        message("contest-detail-message", error.status === 404 ? "比赛不存在或当前账号不可见。" : error.message);
+        view = null;
+        selected = null;
+      }
+      throw error;
+    } finally {
+      if (sequence === detailEpoch) {
+        detailLoading = false;
+        setDetailBusy(!selected);
+        byID("contest-csv-confirm").disabled = !csvState;
+        for (const button of document.querySelectorAll(".contest-nav-item")) button.disabled = false;
+      }
+    }
+  }
+  async function openContest(id, replace = false) {
+    if (!mayDiscard()) return;
+    const path = `/contests/${id}`;
+    if (replace) history.replaceState({ contest: id }, "", path);
+    else history.pushState({ contest: id }, "", path);
+    activePanel = "overview";
+    try { await loadDetail(id); } catch {}
+  }
+  async function list(more = false) {
+    if (!more) {
+      listAfter = 0;
+      byID("contest-list").replaceChildren();
+    }
+    const items = await api(`/api/contests?after=${listAfter}`);
+    for (const contest of items) {
+      const card = node("article", undefined, "contest-list-item");
+      const copy = node("div");
+      copy.append(node("span", `#${contest.id} · ${contest.scoring_mode}`, "problem-number"), node("h3", contest.title), node("p", `${date(contest.starts_at)} — ${date(contest.ends_at)}`));
+      const button = node("button", "进入比赛", "button primary");
+      button.type = "button";
+      button.addEventListener("click", () => run(button, () => openContest(contest.id), "contest-message"));
+      card.append(copy, button);
+      byID("contest-list").append(card);
+      listAfter = contest.id;
+    }
+    if (!items.length && !more) byID("contest-list").append(node("p", "暂时没有可见比赛。", "problem-empty"));
+    byID("contest-more").hidden = items.length < 100;
+  }
+
+  function option(value, label) {
+    const element = node("option", label);
+    element.value = String(value);
+    return element;
+  }
+  function selectedUserLabel(person) {
+    return `${person.username} (#${person.id}) · ${person.display_name} · ${person.student_no || "无学号"} · ${person.account_type}`;
+  }
+  function populateManageOptions(options) {
+    const problemSelect = byID("contest-problem-option");
+    problemSelect.replaceChildren();
+    const problems = new Map();
+    for (const problem of view?.problems || []) problems.set(problem.problem_id, { id: problem.problem_id, title: problem.statement.title || "题目", statement_version: problem.statement_version, data_version: problem.data_version });
+    for (const problem of options.problems || []) problems.set(problem.id, problem);
+    for (const problem of [...problems.values()].sort((a, b) => a.id - b.id)) problemSelect.append(option(problem.id, `#${problem.id} ${problem.title} · 题面 v${problem.statement_version} / 数据 v${problem.data_version}`));
+    const userSelect = byID("contest-user-option");
+    userSelect.replaceChildren();
+    for (const person of options.users || []) userSelect.append(option(person.id, selectedUserLabel(person)));
+    const adminSelect = byID("contest-admin-option");
+    adminSelect.replaceChildren();
+    for (const person of options.admins || []) adminSelect.append(option(person.id, selectedUserLabel(person)));
+    const memberSelect = byID("contest-member-option");
+    memberSelect.replaceChildren();
+    for (const person of options.users || []) memberSelect.append(option(person.id, selectedUserLabel(person)));
+    const teamSelect = byID("contest-team-option");
+    teamSelect.replaceChildren();
+    const bulk = byID("contest-bulk-teams");
+    bulk.replaceChildren(node("legend", "批量作用队伍"));
+    for (const team of view?.teams || []) {
+      teamSelect.append(option(team.id, `#${team.id} ${team.name} · ${team.status} / ${team.participant_type}`));
+      const label = node("label");
+      const checkbox = node("input");
+      checkbox.type = "checkbox";
+      checkbox.value = String(team.id);
+      label.append(checkbox, document.createTextNode(` #${team.id} ${team.name}`));
+      bulk.append(label);
+    }
+    syncManageFields();
+  }
+  async function loadManageOptions(query = "") {
+    if (!view?.manager || !selected) return;
+    const sequence = ++manageEpoch;
+    const id = selected.id;
+    const result = await api(`/api/contests/${id}/manage-options?q=${encodeURIComponent(query.trim())}`);
+    if (sequence === manageEpoch && selected?.id === id) populateManageOptions(result);
+  }
+  function syncManageFields() {
+    if (!selected) return;
+    const action = byID("contest-manage-action").value;
+    for (const group of document.querySelectorAll("[data-manage-fields]")) group.hidden = !group.dataset.manageFields.split(" ").includes(action);
+    byID("contest-bulk-teams").hidden = action !== "bulk_status";
+    byID("contest-manage-problem-id").value = byID("contest-problem-option").value || "";
+    byID("contest-manage-team-id").value = byID("contest-team-option").value || "";
+    const userID = action === "revoke_admin" ? byID("contest-admin-option").value : byID("contest-user-option").value;
+    byID("contest-manage-user-id").value = userID || "";
+    byID("contest-manage-members").value = [...byID("contest-member-option").selectedOptions].map((item) => item.value).join(",");
+    byID("contest-manage-team-ids").value = [...byID("contest-bulk-teams").querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value).join(",");
+    const labels = {
+      add_problem: "会把所选题目的当前题面版本与数据版本固定到本比赛；之后题目更新不会改动比赛快照。",
+      remove_problem: "会从本比赛移除所选题目；只允许赛前执行。",
+      add_team: "会创建队伍并绑定所选人员；提交后受比赛报名策略和权限约束。",
+      team_status: "会改变所选队伍的状态和正式/打星类型。",
+      bulk_status: "会批量改变已勾选队伍的状态和类型，请核对名单。",
+      grant_admin: "会授予所选永久账号本比赛的管理权限。",
+      revoke_admin: "会撤销所选账号的本比赛管理权限。",
+      freeze: "会保存当前榜单作为封榜快照；普通成员不再看到实时变化。",
+      unfreeze: "会结束当前封榜并恢复展示实时榜。",
+      retire_account: "会永久停用所选比赛临时账号，且该操作只能对已结束比赛执行。",
+    };
+    byID("contest-manage-impact").textContent = `作用对象：${selected.title}（#${selected.id}）。${labels[action] || ""}`;
+  }
+  function confirmManage(action) {
+    const risks = { bulk_status: "批量队伍状态", remove_problem: "移除比赛题目", retire_account: "报废临时账号", freeze: "封存当前榜单", revoke_admin: "撤销管理员" };
+    return !risks[action] || window.confirm(`将在“${selected.title}”（#${selected.id}）执行${risks[action]}。确认继续？`);
+  }
+
+  function invalidateCSV(text = "") {
+    ++csvEpoch;
+    csvState = null;
+    byID("contest-csv-confirm").disabled = true;
+    byID("contest-csv-preview").replaceChildren();
+    if (text) byID("contest-csv-preview").append(node("p", text, "field-help"));
+  }
+  function renderCSVPreview(state, preview) {
+    const target = byID("contest-csv-preview");
+    target.replaceChildren(node("h3", `预览所属：${state.title}（#${state.contestID}）`));
+    target.append(node("p", `${preview.rows.length} 行 · ${preview.valid ? "可以导入" : "存在错误"} · 令牌仅绑定此比赛和此 CSV 内容`));
+    for (const row of preview.rows) target.append(node("p", `第 ${row.line} 行 · ${row.username} · ${row.team} · ${row.participant_type} · ${row.error || "可导入"}`));
+  }
+  function renderSettleTarget() {
+    if (!selected) return;
+    byID("contest-settle-target").textContent = `作用比赛：${selected.title}（#${selected.id}）· 结束于 ${date(selected.ends_at)} · ${selected.settled_at ? `已于 ${date(selected.settled_at)} 结算，重复请求只返回既有快照` : "当前未结算"}`;
+  }
+  function setEditMode(editing) {
+    if (!editing && editingMode && dirty && !window.confirm("编辑内容尚未保存。切换会保留当前标签页草稿；是否继续？")) {
+      createForm.elements.edit_current.checked = true;
+      return;
+    }
+    if (editing && (!selected || new Date(selected.starts_at) <= new Date() || selected.settled_at)) {
+      byID("contest-edit-current").checked = false;
+      message("contest-detail-message", "只有尚未开始且未结算的比赛可以编辑。");
+      return;
+    }
+    createForm.elements.edit_current.checked = editing;
+    editingMode = editing;
+    createForm.querySelector('button[type="submit"]').textContent = editing ? "保存比赛修改" : "创建比赛";
+    createForm.elements.team_mode.disabled = editing;
+    if (!editing) {
+      createForm.reset();
+      createForm.elements.starts_at.value = localTime(new Date(Date.now() + 15 * 60000));
+      createForm.elements.duration_minutes.value = "120";
+      createForm.elements.end_mode.value = "duration";
+      restoreDraft();
+      savedSnapshot = formSnapshot();
+      dirty = false;
+      previewEnd();
+      return;
+    }
+    for (const [key, value] of Object.entries(selected)) {
+      const field = createForm.elements.namedItem(key);
+      if (!field) continue;
+      if (field.type === "checkbox") field.checked = !!value;
+      else if (field.type === "datetime-local") field.value = localTime(value);
+      else field.value = value;
+    }
+    const minutes = (new Date(selected.ends_at) - new Date(selected.starts_at)) / 60000;
+    createForm.elements.duration_minutes.value = Number.isInteger(minutes) ? minutes : "";
+    createForm.elements.end_mode.value = Number.isInteger(minutes) ? "duration" : "manual";
+    restoreDraft();
+    savedSnapshot = formSnapshot();
+    dirty = false;
+    previewEnd();
+  }
+
+  createForm.elements.starts_at.value = localTime(new Date(Date.now() + 15 * 60000));
+  byID("contest-time-help").textContent = `浏览器时区：${Intl.DateTimeFormat().resolvedOptions().timeZone}。开始时间须晚于服务器当前时间，结束须晚于开始，最长 30 天；提交时仍会按服务器时间复核。`;
+  previewEnd();
+  savedSnapshot = formSnapshot();
+  createForm.addEventListener("input", () => { clearCreateErrors(); previewEnd(); markDirty(); });
+  createForm.addEventListener("change", () => { clearCreateErrors(); previewEnd(); markDirty(); });
+  createForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(event.submitter || createForm.querySelector("button"), async () => {
+      const input = contestInput();
+      const editing = createForm.elements.edit_current.checked;
+      const id = editing ? selected.id : 0;
+      const inputKey = JSON.stringify(input);
+      if (!editing && lastCreation?.key === inputKey) {
+        if (lastCreation.id) {
+          await openContest(lastCreation.id);
+          return;
+        }
+        if (!window.confirm("上次创建结果尚未确认。请先查看比赛列表；确认没有成功后再重试。已核对并继续？")) {
+          throw new APIError("已保留表单，请先核对比赛列表。", 409);
+        }
+      }
+      if (!editing) rememberCreation({ key: inputKey });
+      let data;
+      try {
+        data = await api(editing ? `/api/contests/${id}` : "/api/contests", editing ? "PUT" : "POST", input);
+      } catch (error) {
+        if (error.fields) createErrors(error.fields);
+        if (!editing && error.status >= 400 && error.status < 500 && !lastCreation?.id) rememberCreation(null);
+        if (!editing && error.status === 0) error.message += "；请先核对比赛列表，勿直接重复创建。";
+        if (editing && error.status === 0) {
+          await loadDetail(id).catch(() => {});
+          error.message += "；已重新读取服务器状态，请核对后再决定是否重试。";
+        }
+        throw error;
+      }
+      if (!editing) rememberCreation({ key: inputKey, id: data.id });
+      dirty = false;
+      clearDraft();
+      byID("contest-create").hidden = true;
+      message("contest-message", editing ? "比赛修改已保存。" : "比赛已创建。", true);
+      await openContest(data.id);
+    }, "contest-form-error");
+  });
+  byID("contest-create-toggle").addEventListener("click", (event) => { event.preventDefault(); setEditMode(false); showCreate(); });
+  byID("contest-create-close").addEventListener("click", () => { if (mayDiscard()) byID("contest-create").hidden = true; });
+  byID("contest-edit-current").addEventListener("change", (event) => setEditMode(event.target.checked));
+  byID("contest-edit").addEventListener("click", () => {
+    if (!selected || new Date(selected.starts_at) <= new Date() || selected.settled_at) {
+      message("contest-detail-message", "只有尚未开始且未结算的比赛可以编辑。");
+      return;
+    }
+    history.pushState({}, "", "/contests");
+    showCenter();
+    setEditMode(true);
+    showCreate();
+  });
+  byID("contest-more").addEventListener("click", (event) => run(event.target, () => list(true), "contest-message"));
+  byID("contest-refresh").addEventListener("click", (event) => run(event.target, () => selected && loadDetail(selected.id), "contest-detail-message"));
+  byID("contest-enroll").addEventListener("click", (event) => run(event.target, async () => {
+    if (!selected) return;
+    const id = selected.id;
+    await api(`/api/contests/${id}/enroll`, "POST", {});
+    await loadDetail(id);
+    message("contest-detail-message", `已提交“${selected.title}”（#${id}）的报名。`, true);
+  }, "contest-detail-message"));
+  for (const button of document.querySelectorAll("[data-contest-panel]")) button.addEventListener("click", () => switchPanel(button.dataset.contestPanel));
+  byID("contest-back").addEventListener("click", (event) => {
+    event.preventDefault();
+    if (!mayDiscard()) return;
+    history.pushState({}, "", "/contests");
+    showCenter();
+  });
+  window.addEventListener("popstate", () => {
+    const id = Number(window.location.pathname.split("/")[2]);
+    if (Number.isSafeInteger(id) && id > 0) loadDetail(id).catch(() => {});
+    else showCenter();
+  });
+  byID("contest-problem-select").addEventListener("change", contestLanguageControls);
+  for (const id of ["contest-search", "contest-filter-type", "contest-filter-status", "contest-filter-account", "contest-filter-submissions"]) byID(id).addEventListener("input", renderRoster);
+  byID("contest-manage-action").addEventListener("change", syncManageFields);
+  for (const id of ["contest-problem-option", "contest-user-option", "contest-admin-option", "contest-team-option"]) byID(id).addEventListener("change", syncManageFields);
+  byID("contest-member-option").addEventListener("change", syncManageFields);
+  byID("contest-bulk-teams").addEventListener("change", syncManageFields);
+  let manageQueryTimer = 0;
+  for (const id of ["contest-problem-query", "contest-user-query"]) byID(id).addEventListener("input", () => {
+    clearTimeout(manageQueryTimer);
+    manageQueryTimer = setTimeout(() => {
+      const query = byID("contest-problem-query").value || byID("contest-user-query").value;
+      loadManageOptions(query).catch((error) => message("contest-detail-message", error.message));
+    }, 250);
+  });
+  byID("contest-manage-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const action = byID("contest-manage-action").value;
+    if (!confirmManage(action)) return;
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const id = selected.id;
+      const title = selected.title;
+      const data = { action };
+      if (action === "add_problem" || action === "remove_problem") data.problem_id = Number(byID("contest-manage-problem-id").value);
+      if (["grant_admin", "revoke_admin", "retire_account"].includes(action)) data.user_id = Number(byID("contest-manage-user-id").value);
+      if (["team_status", "bulk_status"].includes(action)) {
+        data.status = event.target.elements.status.value;
+        data.participant_type = event.target.elements.participant_type.value;
+      }
+      if (action === "team_status") data.team_id = Number(byID("contest-manage-team-id").value);
+      if (action === "bulk_status") data.team_ids = byID("contest-manage-team-ids").value.split(",").filter(Boolean).map(Number);
+      if (action === "add_team") {
+        data.name = event.target.elements.name.value;
+        data.members = [...byID("contest-member-option").selectedOptions].map((item) => Number(item.value));
+        data.status = event.target.elements.status.value;
+        data.participant_type = event.target.elements.participant_type.value;
+      }
+      try {
+        await api(`/api/contests/${id}/manage`, "POST", data);
+      } catch (error) {
+        if (error.status === 0) {
+          await loadDetail(id).catch(() => {});
+          error.message += "；已重新读取比赛状态，请核对后再决定是否重试。";
+        }
+        throw error;
+      }
+      await loadDetail(id);
+      message("contest-detail-message", `已在“${title}”（#${id}）完成${byID("contest-manage-action").selectedOptions[0].textContent}。`, true);
+    }, "contest-detail-message");
+  });
+  byID("contest-csv-file").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > 256 * 1024) { message("contest-detail-message", "CSV 最多 256 KiB。"); return; }
+    byID("contest-csv-form").elements.csv.value = await file.text();
+    invalidateCSV("CSV 文件已载入；请重新生成预览。");
+  });
+  byID("contest-csv-form").elements.csv.addEventListener("input", () => invalidateCSV("CSV 内容已变化；旧预览和确认令牌已失效。"));
+  byID("contest-csv-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const id = selected.id;
+      const csv = event.target.elements.csv.value;
+      const sequence = ++csvEpoch;
+      const preview = await api(`/api/contests/${id}/csv/preview`, "POST", { csv });
+      if (sequence !== csvEpoch || !selected || selected.id !== id) return;
+      csvState = { contestID: id, title: selected.title, csv, token: preview.token, rows: preview.rows, valid: preview.valid };
+      renderCSVPreview(csvState, preview);
+      byID("contest-csv-confirm").disabled = !preview.valid;
+      message("contest-detail-message", preview.valid ? "预览已生成，确认按钮仅在当前比赛和当前 CSV 未变化时有效。" : "预览包含错误，请修改后重新生成。", preview.valid);
+    }, "contest-detail-message");
+  });
+  byID("contest-csv-confirm").addEventListener("click", (event) => {
+    run(event.target, async () => {
+      if (!csvState || !selected || csvState.contestID !== selected.id || csvState.csv !== byID("contest-csv-form").elements.csv.value) {
+        invalidateCSV("预览已失效，请重新生成。");
+        throw new APIError("不能确认旧预览。", 409);
+      }
+      const state = csvState;
+      byID("contest-csv-confirm").disabled = true;
+      await api(`/api/contests/${state.contestID}/csv/confirm`, "POST", { token: state.token });
+      csvState = null;
+      await loadDetail(state.contestID);
+      message("contest-detail-message", `名单已导入“${state.title}”（#${state.contestID}）。`, true);
+    }, "contest-detail-message").finally(() => { byID("contest-csv-confirm").disabled = !csvState; });
+  });
+  byID("contest-temporary-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const id = selected.id;
+      const data = Object.fromEntries(new FormData(event.target));
+      await api(`/api/contests/${id}/temporary-accounts`, "POST", data);
+      event.target.reset();
+      await loadDetail(id);
+      message("contest-detail-message", "临时账号已创建并加入比赛；密码不会保存在浏览器草稿中。", true);
+    }, "contest-detail-message");
+  });
+  byID("contest-history-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const data = Object.fromEntries(new FormData(event.target));
+      const records = await api(`/api/contests/${selected.id}/submissions?user_id=${encodeURIComponent(data.user_id)}`);
+      byID("contest-history").replaceChildren();
+      for (const submission of records) {
+        const paragraph = node("p");
+        const link = node("a", `#${submission.id} · ${submission.kind} · ${submission.status} · ${submission.score} 分`);
+        link.href = `/submissions/${submission.id}`;
+        paragraph.append(link);
+        byID("contest-history").append(paragraph);
+      }
+    }, "contest-detail-message");
+  });
+  byID("contest-submit-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const id = selected.id;
+      const data = Object.fromEntries(new FormData(event.target));
+      data.contest_id = id;
+      data.problem_id = Number(data.problem_id);
+      const submission = await api("/api/submissions", "POST", data);
+      const link = node("a", `查看提交 #${submission.id}`);
+      link.href = `/submissions/${submission.id}`;
+      byID("contest-submission-result").replaceChildren(link);
+      message("contest-detail-message", `已向“${selected.title}”（#${id}）提交。`, true);
+    }, "contest-detail-message");
+  });
+  byID("contest-settle").addEventListener("click", (event) => {
+    if (!selected || !window.confirm(`将结算“${selected.title}”（#${selected.id}）。请确认比赛已结束且全部提交评测完成。继续？`)) return;
+    run(event.target, async () => {
+      const id = selected.id;
+      const title = selected.title;
+      try {
+        await api(`/api/contests/${id}/settle`, "POST", {});
+      } catch (error) {
+        if (error.status === 0) {
+          await loadDetail(id).catch(() => {});
+          error.message += "；已重新读取结算状态，请核对结果后再重试。";
+        }
+        throw error;
+      }
+      await loadDetail(id);
+      message("contest-detail-message", `“${title}”（#${id}）已结算；重复请求不会重复计入积分。`, true);
+    }, "contest-detail-message");
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (dirty || detailLoading) { event.preventDefault(); event.returnValue = ""; }
+  });
+
+  Promise.allSettled([api("/api/users/me"), list()]).then(([accountResult, listResult]) => {
+    if (accountResult.status === "fulfilled") user = accountResult.value;
+    if (listResult.status === "rejected") message("contest-message", listResult.reason.message);
+    else message("contest-message", "请选择比赛进入工作区。");
+    const routeID = Number(window.location.pathname.split("/")[2]);
+    if (Number.isSafeInteger(routeID) && routeID > 0) {
+      history.replaceState({ contest: routeID }, "", `/contests/${routeID}`);
+      loadDetail(routeID).catch(() => {});
+    }
+  });
 })();

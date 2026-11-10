@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 
@@ -32,6 +33,7 @@ type httpOperations struct {
 	options   ListOptions
 	dataset   testcase.Dataset
 	revision  uint64
+	mode      string
 	requestID string
 }
 
@@ -56,11 +58,12 @@ func (f *httpOperations) Create(_ context.Context, a Actor, in Input, id string)
 func (f *httpOperations) Update(_ context.Context, a Actor, _ uint64, in Input, id string) (Problem, error) {
 	return f.Create(context.Background(), a, in, id)
 }
-func (f *httpOperations) Import(_ context.Context, a Actor, _ uint64, rev uint64, d testcase.Dataset, id string) (DataVersion, error) {
+func (f *httpOperations) Import(_ context.Context, a Actor, _ uint64, rev uint64, d testcase.Dataset, mode, id string) (DataVersion, error) {
 	f.calls++
 	f.actor = a
 	f.revision = rev
 	f.dataset = d
+	f.mode = mode
 	f.requestID = id
 	return DataVersion{Version: 2, Revision: rev + 1, CaseCount: len(d.Cases), TotalScore: d.TotalScore}, f.err
 }
@@ -225,6 +228,51 @@ func uploadRequest(t *testing.T, archive []byte, fields [][2]string) *http.Reque
 	return r
 }
 
+func uploadFilesRequest(t *testing.T, files [][2]string, fields [][2]string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for _, file := range files {
+		part, err := writer.CreateFormFile("files", file[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = part.Write([]byte(file[1]))
+	}
+	for _, field := range fields {
+		if err := writer.WriteField(field[0], field[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "http://oj.test/api/admin/problems/1/data-versions", &body)
+	r.Header.Set("Content-Type", writer.FormDataContentType())
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: "session"})
+	return r
+}
+
+func unsafeFileNameRequest(t *testing.T, filename string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreatePart(textproto.MIMEHeader{"Content-Disposition": {`form-data; name="files"; filename="` + filename + `"`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("1 2\n"))
+	_ = writer.WriteField("scores", `{"1":100}`)
+	_ = writer.WriteField("revision", "3")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "http://oj.test/api/admin/problems/1/data-versions", &body)
+	r.Header.Set("Content-Type", writer.FormDataContentType())
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: "session"})
+	return r
+}
+
 func TestHTTPImportValidationAndConcurrency(t *testing.T) {
 	valid := archiveBytes(t)
 	for _, tc := range []struct {
@@ -296,6 +344,49 @@ func TestHTTPImportValidationAndConcurrency(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 413 || ops.calls != 0 || len(h.imports) != 0 {
 		t.Fatalf("chunked oversized epilogue: status=%d calls=%d", w.Code, ops.calls)
+	}
+}
+
+func TestHTTPDirectPairedFilesAndMergeMode(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		files  [][2]string
+		fields [][2]string
+		status int
+		mode   string
+	}{
+		{"replace", [][2]string{{"2.in", "2 3\n"}, {"2.out", "5\n"}}, [][2]string{{"scores", `{"2":100}`}, {"revision", "3"}, {"mode", "replace"}}, 201, ImportReplace},
+		{"merge", [][2]string{{"3.out", "7\n"}, {"3.in", "3 4\n"}}, [][2]string{{"scores", `{"3":100}`}, {"revision", "3"}, {"mode", "merge"}}, 201, ImportMerge},
+		{"missing output", [][2]string{{"2.in", "2 3\n"}}, [][2]string{{"scores", `{"2":100}`}, {"revision", "3"}}, 400, ""},
+		{"invalid name", [][2]string{{"bad.name.in", "2 3\n"}, {"bad.name.out", "5\n"}}, [][2]string{{"scores", `{"bad.name":100}`}, {"revision", "3"}}, 400, ""},
+		{"unknown mode", [][2]string{{"2.in", "2 3\n"}, {"2.out", "5\n"}}, [][2]string{{"scores", `{"2":100}`}, {"revision", "3"}, {"mode", "upsert"}}, 400, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := &httpOperations{}
+			_, r := httpHandler(t, ops, adminAuth())
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, uploadFilesRequest(t, tc.files, tc.fields))
+			if w.Code != tc.status {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body)
+			}
+			if tc.status == 201 {
+				if ops.calls != 1 || ops.mode != tc.mode || ops.revision != 3 || len(ops.dataset.Cases) != 1 || ops.dataset.TotalScore != 100 {
+					t.Fatalf("direct upload: %+v", ops)
+				}
+			} else if ops.calls != 0 {
+				t.Fatal("invalid direct upload reached service")
+			}
+		})
+	}
+}
+
+func TestHTTPDirectFileRejectsPathBearingDispositionNames(t *testing.T) {
+	ops := &httpOperations{}
+	_, r := httpHandler(t, ops, adminAuth())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, unsafeFileNameRequest(t, "../1.in"))
+	if w.Code != 400 || ops.calls != 0 || !strings.Contains(w.Body.String(), "文件名不合法") {
+		t.Fatalf("status=%d calls=%d body=%s", w.Code, ops.calls, w.Body)
 	}
 }
 

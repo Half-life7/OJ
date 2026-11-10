@@ -21,8 +21,8 @@
     <div class="header-inner">
       <a class="brand" href="/" aria-label="Biue OJ 首页"><span class="brand-mark" aria-hidden="true">b.</span><span>Biue <strong>OJ</strong><small>编程练习与竞赛</small></span></a>
       <nav aria-label="主导航">
+        <a href="/contests" {{if eq .Name "contests"}}aria-current="page"{{end}}>比赛</a>
         <a href="/learning">社区</a><a href="/rankings">排行榜</a>
-        <a href="/contests">比赛</a>
         <a href="/" {{if eq .Name "home"}}aria-current="page"{{end}}>首页</a>
         <a href="/problems" {{if or (eq .Name "problems") (eq .Name "problem")}}aria-current="page"{{end}}>题库</a>
         <a href="/submissions" {{if or (eq .Name "submissions") (eq .Name "submission")}}aria-current="page"{{end}}>我的提交</a>

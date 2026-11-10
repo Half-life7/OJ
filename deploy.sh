@@ -15,7 +15,7 @@ LAST_BACKUP=
 COMPOSE=()
 on_error() { local status=$?; printf '操作失败（%s），业务可能保持停止。检查 %s/logs；恢复前备份：%s\n' "$status" "$DATA_DIR" "${LAST_BACKUP:-无}" >&2; exit "$status"; }
 trap on_error ERR
-help() { printf '用法：sudo bash deploy.sh install|status|logs|stop|start|restart|update|backup|prune|restore BACKUP_DIRECTORY|uninstall|export-images FILE.tar\n配置：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TLS_CERT、OJ_TLS_KEY、OJ_BACKUP_DIR。\n大陆网络：OJ_NETWORK_PROFILE=cn；自定义 OJ_DOCKERHUB_LIBRARY、OJ_GO_PROXY、OJ_ALPINE_MIRROR、OJ_DOCKER_APT_MIRROR。\n离线镜像导入后用 OJ_SKIP_BUILD=1 install/update（不构建、不拉取，缺镜像立即报错）。\ninstall 默认自动安装缺失的 Docker/Compose，可用 OJ_AUTO_INSTALL_DOCKER=0 禁止；已有账号配置不覆盖。卸载保留全部数据。\n'; }
+help() { printf '用法：sudo bash deploy.sh install|status|logs|public-info|public-url URL|stop|start|restart|update|backup|prune|restore BACKUP_DIRECTORY|uninstall|export-images FILE.tar\n配置：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TLS_CERT、OJ_TLS_KEY、OJ_BACKUP_DIR。\n公网来源：public-info 只显示协议/主机/端口；public-url 修改并重启，必须与浏览器实际访问地址一致。\n大陆网络：OJ_NETWORK_PROFILE=cn；自定义 OJ_DOCKERHUB_LIBRARY、OJ_GO_PROXY、OJ_ALPINE_MIRROR、OJ_DOCKER_APT_MIRROR。\n离线镜像导入后用 OJ_SKIP_BUILD=1 install/update（不构建、不拉取，缺镜像立即报错）。\ninstall 默认自动安装缺失的 Docker/Compose，可用 OJ_AUTO_INSTALL_DOCKER=0 禁止；已有账号配置不覆盖。卸载保留全部数据。\n'; }
 [[ $COMMAND != help ]] || { help; exit 0; }
 [[ $EUID == 0 ]] || { echo '请使用 sudo/root 执行。' >&2; exit 1; }
 [[ $DATA_DIR =~ ^/[A-Za-z0-9_./-]+$ && $DATA_DIR != / && $DATA_DIR != /var && $DATA_DIR != /var/lib && $DATA_DIR != /tmp && $DATA_DIR != *'/../'* && $DATA_DIR != */.. ]] || { echo '数据目录必须为独立的绝对路径。' >&2; exit 1; }
@@ -91,6 +91,7 @@ configure_compose() {
   COMPOSE=("${clean_env[@]}" docker compose --env-file "$ENV_FILE" -p "$PROJECT" -f "$SOURCE_DIR/deploy/docker-compose.yml" -f "$SOURCE_DIR/deploy/docker-compose.production.yml")
   if [[ $(get PUBLIC_URL) == https://* ]]; then COMPOSE+=(-f "$SOURCE_DIR/deploy/docker-compose.https.yml"); fi
   "${COMPOSE[@]}" config --quiet
+  printf '公网访问地址：%s（写请求 Origin 必须与协议、主机和端口完全一致）\n' "$(get PUBLIC_URL)"
 }
 dc() { "${COMPOSE[@]}" "$@"; }
 image_inventory() { dc config --format json | python3 "$IMAGE_HELPER" "$1"; }
@@ -250,13 +251,27 @@ case "$COMMAND" in
     up
     printf '安装完成：%s\n账号：%s（密码已通过安全输入设置）\n后续：sudo bash deploy.sh status / backup / update\n' "$(get PUBLIC_URL)" "${OJ_ADMIN_USERNAME:-admin}"
     ;;
-  status|logs|stop|start|restart|update|backup|restore|uninstall|prune|export-images)
+  status|logs|public-info|public-url|stop|start|restart|update|backup|restore|uninstall|prune|export-images)
     [[ -f $ENV_FILE ]] || { echo '尚未安装，请先运行 install。'; exit 1; }
     if [[ $COMMAND == update ]]; then python3 "$IMAGE_HELPER" configure "$ENV_FILE"; fi
     configure_compose
     case "$COMMAND" in
       status) dc ps -a ;;
       logs) dc logs --tail 200 ;;
+      public-info) python3 "$HELPER" public-info "$ENV_FILE" ;;
+      public-url)
+        [[ -n $ARCHIVE ]] || { echo 'public-url 需要完整公网地址，例如 https://oj.example.edu。'; exit 1; }
+        if [[ $ARCHIVE == https://* && ! -f $DATA_DIR/config/public-tls/server.pem && ! -f $DATA_DIR/config/public-tls/server.key && ( -z ${OJ_TLS_CERT:-} || -z ${OJ_TLS_KEY:-} ) ]]; then
+          echo '切换到 HTTPS 前需提供 OJ_TLS_CERT/OJ_TLS_KEY，或先在配置目录放入匹配的公网证书。'; exit 1
+        fi
+        python3 "$HELPER" public-url "$ENV_FILE" "$ARCHIVE"
+        configure_compose
+        prepare_files
+        require_runtime_images
+        quiesce
+        up
+        python3 "$HELPER" public-info "$ENV_FILE"
+        ;;
       stop) dc stop -t 60 ;;
       start) up ;;
       restart) require_runtime_images; quiesce; up ;;

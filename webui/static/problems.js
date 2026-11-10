@@ -11,9 +11,10 @@
   let csrfToken = "";
 
   class APIError extends Error {
-    constructor(message, status) {
+    constructor(message, status, name = "APIError") {
       super(message);
       this.status = status;
+      this.name = name;
     }
   }
 
@@ -36,7 +37,8 @@
       }
       if (!response.ok || result.code !== 0) {
         if (response.status === 403) csrfToken = "";
-        const message = response.status === 409 ? "题目已被其他操作更新。请重新加载此题，再确认你的修改。" : result.message || "操作未完成，请稍后重试。";
+        const requestID = response.headers?.get?.("X-Request-ID");
+        const message = (response.status === 409 ? "题目已被其他操作更新。请重新加载此题，再确认你的修改。" : result.message || "操作未完成，请稍后重试。") + (requestID ? `（请求 ID：${requestID}）` : "");
         throw new APIError(message, response.status);
       }
       return result.data;
@@ -55,6 +57,44 @@
       if (!csrfToken) throw new APIError("无法验证当前页面，请刷新后重试。", 403);
     }
     return request(path, method, body);
+  }
+
+  async function uploadWithProgress(path, body) {
+    if (!csrfToken) {
+      const result = await request("/api/auth/csrf");
+      csrfToken = result && result.csrf_token;
+      if (!csrfToken) throw new APIError("无法验证当前页面，请刷新后重试。", 403);
+    }
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      uploadXHR = xhr;
+      xhr.open("POST", path);
+      xhr.timeout = 120000;
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const percent = Math.max(0, Math.min(100, Math.round(event.loaded * 100 / event.total)));
+        setUploadProgress(percent, `正在上传 ${percent}%（${number(event.loaded)} / ${number(event.total)} 字节）`);
+      };
+      xhr.onload = () => {
+        uploadXHR = null;
+        let result = null;
+        try { result = JSON.parse(xhr.responseText); } catch {}
+        if (xhr.status >= 200 && xhr.status < 300 && result?.code === 0) {
+          setUploadProgress(100, "上传完成，正在读取发布结果。");
+          resolve(result.data);
+          return;
+        }
+        const requestID = xhr.getResponseHeader?.("X-Request-ID");
+        const base = xhr.status === 409 ? "题目或数据已被其他操作更新。请重新加载后再合并。" : result?.message || (xhr.status === 413 ? "上传内容超过大小限制。" : "上传未完成，请稍后重试。");
+        reject(new APIError(base + (requestID ? `（请求 ID：${requestID}）` : ""), xhr.status));
+      };
+      xhr.onerror = () => { uploadXHR = null; reject(new APIError("网络连接中断。正在核对是否已发布。", 0)); };
+      xhr.ontimeout = () => { uploadXHR = null; reject(new APIError("上传等待超过 120 秒。正在核对是否已发布。", 0)); };
+      xhr.onabort = () => { uploadXHR = null; reject(new APIError("上传已取消。正在核对服务器是否已经完成发布。", 0, "AbortError")); };
+      xhr.send(body);
+    });
   }
 
   function node(tag, text, className) {
@@ -213,6 +253,255 @@
   let versionEpoch = 0;
   let savedEditor = "";
   let adminAllowed = false;
+  let uploadPreview = null;
+  let uploadXHR = null;
+  let uploadInspectEpoch = 0;
+  let scoreInputs = new Map();
+  const directFileLimit = 16 * 1024 * 1024;
+  const directTotalLimit = 64 * 1024 * 1024;
+  const archiveLimit = 32 * 1024 * 1024;
+  const maxCases = 512;
+  const checkerTemplate = `import base64
+import json
+import sys
+
+data = json.load(sys.stdin)
+input_data = base64.b64decode(data["input"])
+expected = base64.b64decode(data["expected"])
+output = base64.b64decode(data["output"])
+
+# Replace this exact comparison when the problem accepts multiple answers.
+print("AC" if output.split() == expected.split() else "WA")
+`;
+
+  function updateCheckerWorkspace() {
+    const mode = editor.elements.namedItem("checker_mode")?.value || "tokens";
+    byID("checker-workspace").hidden = mode !== "spj";
+    const source = editor.elements.namedItem("checker_source");
+    if (source) source.disabled = mode !== "spj";
+    byID("checker-example-input").value = editor.elements.namedItem("sample_input")?.value || "";
+    byID("checker-example-output").value = editor.elements.namedItem("sample_output")?.value || "";
+    const link = byID("checker-self-test");
+    link.hidden = !selected || mode !== "spj" || selected.status !== "published" || selected.visibility !== "public";
+    if (selected) link.href = "/problems/" + encodeURIComponent(selected.id);
+  }
+
+  function setUploadProgress(percent, text) {
+    const progress = byID("data-upload-progress");
+    const label = byID("data-upload-progress-label");
+    progress.hidden = false;
+    progress.value = percent;
+    label.hidden = false;
+    label.textContent = text;
+  }
+
+  function clearUploadProgress() {
+    const progress = byID("data-upload-progress");
+    progress.value = 0;
+    progress.hidden = true;
+    byID("data-upload-progress-label").hidden = true;
+  }
+
+  function invalidateUpload() {
+    uploadPreview = null;
+    scoreInputs = new Map();
+    byID("data-preview").hidden = true;
+    byID("data-score-table").replaceChildren();
+    byID("data-scores").value = "";
+    byID("data-upload-submit").disabled = true;
+    message("problem-upload-message", "");
+    clearUploadProgress();
+  }
+
+  function validCaseID(id) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) return false;
+    const upper = id.toUpperCase();
+    return !["CON", "PRN", "AUX", "NUL"].includes(upper) && !/^(COM|LPT)[1-9]$/.test(upper);
+  }
+
+  function inspectNames(names) {
+    const pairs = new Map();
+    const folded = new Map();
+    const invalid = [];
+    const duplicates = [];
+    const seen = new Set();
+    for (const name of names) {
+      if (seen.has(name)) {
+        duplicates.push(name);
+        continue;
+      }
+      seen.add(name);
+      const match = /^([^/\\]+)\.(in|out)$/.exec(name);
+      if (!match || !validCaseID(match[1])) {
+        invalid.push(name);
+        continue;
+      }
+      const id = match[1];
+      const fold = id.toLowerCase();
+      if (folded.has(fold) && folded.get(fold) !== id) {
+        duplicates.push(`${folded.get(fold)} / ${id}（大小写冲突）`);
+        continue;
+      }
+      folded.set(fold, id);
+      const pair = pairs.get(id) || { in: false, out: false };
+      pair[match[2]] = true;
+      pairs.set(id, pair);
+    }
+    const ids = [...pairs.keys()].sort();
+    const missing = ids.filter((id) => !pairs.get(id).in || !pairs.get(id).out).map((id) => !pairs.get(id).in ? `${id}.in` : `${id}.out`);
+    return { ids, invalid, duplicates, missing, valid: ids.length > 0 && invalid.length === 0 && duplicates.length === 0 && missing.length === 0 && ids.length <= maxCases };
+  }
+
+  async function zipEntryNames(file) {
+    if (typeof file.arrayBuffer !== "function") throw new APIError("当前浏览器无法预读 ZIP 目录，请刷新后重试或直接选择 .in/.out 文件。", 400);
+    const raw = new Uint8Array(await file.arrayBuffer());
+    const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    let eocd = -1;
+    const first = Math.max(0, raw.length - 65557);
+    for (let offset = raw.length - 22; offset >= first; offset--) {
+      if (view.getUint32(offset, true) === 0x06054b50) { eocd = offset; break; }
+    }
+    if (eocd < 0) throw new APIError("ZIP 目录不完整或文件不是有效 ZIP。", 400);
+    const count = view.getUint16(eocd + 10, true);
+    if (count < 1 || count > maxCases * 2) throw new APIError("ZIP 必须包含 1～1024 个 .in/.out 文件。", 400);
+    let offset = view.getUint32(eocd + 16, true);
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const names = [];
+    for (let index = 0; index < count; index++) {
+      if (offset + 46 > raw.length || view.getUint32(offset, true) !== 0x02014b50) throw new APIError("ZIP 中央目录损坏。", 400);
+      const nameLength = view.getUint16(offset + 28, true);
+      const extraLength = view.getUint16(offset + 30, true);
+      const commentLength = view.getUint16(offset + 32, true);
+      const end = offset + 46 + nameLength;
+      if (end > raw.length) throw new APIError("ZIP 文件名越界。", 400);
+      names.push(decoder.decode(raw.slice(offset + 46, end)));
+      offset = end + extraLength + commentLength;
+    }
+    return names;
+  }
+
+  function setDefaultScores(ids) {
+    scoreInputs = new Map();
+    const base = ids.length ? Math.floor(100 / ids.length) : 0;
+    ids.forEach((id, index) => {
+      const score = index === ids.length - 1 ? base + 100 - base * ids.length : base;
+      scoreInputs.set(id, String(score));
+    });
+  }
+
+  function renderScores(ids) {
+    const table = node("table", undefined, "problem-case-table score-entry-table");
+    const head = node("thead");
+    const row = node("tr");
+    for (const label of ["测试点", "输入文件", "输出文件", "分值"]) {
+      const th = node("th", label);
+      th.scope = "col";
+      row.append(th);
+    }
+    head.append(row);
+    const body = node("tbody");
+    for (const id of ids) {
+      const line = node("tr");
+      line.append(node("td", id), node("td", `${id}.in`), node("td", `${id}.out`));
+      const input = node("input");
+      input.type = "number";
+      input.min = "0";
+      input.step = "1";
+      input.value = scoreInputs.get(id) || "0";
+      input.setAttribute("data-score-id", id);
+      input.addEventListener("input", () => {
+        scoreInputs.set(id, input.value);
+        validateScores(true);
+      });
+      const cell = node("td");
+      cell.append(input);
+      line.append(cell);
+      body.append(line);
+    }
+    table.append(head, body);
+    byID("data-score-table").replaceChildren(table);
+  }
+
+  function validateScores(write = false) {
+    const errors = [];
+    let total = 0n;
+    for (const [id, raw] of scoreInputs) {
+      if (!/^(0|[1-9][0-9]*)$/.test(raw)) {
+        errors.push(`${id} 的分值必须是整数`);
+        continue;
+      }
+      const value = BigInt(raw);
+      if (value < 0n || value > 9223372036854775807n) errors.push(`${id} 的分值超出 64 位整数范围`);
+      if (total > 9223372036854775807n - value) errors.push("总分超出 64 位整数范围");
+      else total += value;
+    }
+    if (total <= 0n) errors.push("总分必须大于零");
+    const unique = [...new Set(errors)];
+    const error = byID("data-preview-error");
+    error.textContent = unique.join("；");
+    error.hidden = unique.length === 0;
+    byID("data-upload-submit").disabled = unique.length > 0 || !uploadPreview?.valid || mutationPending;
+    if (write || unique.length === 0) {
+      byID("data-scores").value = unique.length === 0 ? `{${[...scoreInputs].map(([id, score]) => `${JSON.stringify(id)}:${score}`).join(",")}}` : "";
+    }
+    if (uploadPreview) {
+      byID("data-preview-summary").textContent = `${uploadPreview.kind === "zip" ? "ZIP 批量" : "直接文件"} · ${scoreInputs.size} 个测试点 · 总分 ${total.toString()} · 发布方式：${byID("data-import-mode").value === "merge" ? "合并/替换同 ID" : "完整替换"}`;
+    }
+    return unique.length === 0;
+  }
+
+  async function refreshUploadPreview() {
+    const sequence = ++uploadInspectEpoch;
+    const files = Array.from(byID("data-files").files || []);
+    invalidateUpload();
+    if (files.length === 0) return null;
+    byID("data-preview").hidden = false;
+    byID("data-preview-error").hidden = false;
+    byID("data-preview-error").textContent = "正在校验文件名和配对…";
+    let names;
+    let kind = "files";
+    try {
+      if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
+        if (files[0].size <= 0 || files[0].size > archiveLimit) throw new APIError("ZIP 必须非空且不超过 32 MiB。", 400);
+        kind = "zip";
+        names = await zipEntryNames(files[0]);
+      } else {
+        if (files.some((file) => /\.zip$/i.test(file.name))) throw new APIError("ZIP 不能与单个 .in/.out 文件混合上传。", 400);
+        if (files.some((file) => file.size > directFileLimit)) throw new APIError("每个直接上传文件不得超过 16 MiB。", 400);
+        if (files.reduce((sum, file) => sum + file.size, 0) > directTotalLimit) throw new APIError("直接文件合计不得超过 64 MiB。", 400);
+        names = files.map((file) => file.name);
+      }
+    } catch (error) {
+      if (sequence !== uploadInspectEpoch) return null;
+      uploadPreview = { valid: false, kind, files };
+      byID("data-preview-error").textContent = error.message;
+      byID("data-preview-summary").textContent = "未生成测试点";
+      validateScores(true);
+      return uploadPreview;
+    }
+    if (sequence !== uploadInspectEpoch) return null;
+    const inspected = inspectNames(names);
+    uploadPreview = { valid: inspected.valid, kind, files, names, ids: inspected.ids };
+    const problems = [];
+    if (inspected.invalid.length) problems.push(`非法文件：${inspected.invalid.join("、")}`);
+    if (inspected.duplicates.length) problems.push(`重复或冲突：${inspected.duplicates.join("、")}`);
+    if (inspected.missing.length) problems.push(`缺少配对：${inspected.missing.join("、")}`);
+    if (inspected.ids.length > maxCases) problems.push(`共 ${inspected.ids.length} 个测试点，超过 512 上限`);
+    if (inspected.ids.length === 0) problems.push("没有发现合法的 .in/.out 测试点");
+    byID("data-preview-error").textContent = problems.join("；");
+    byID("data-preview-error").hidden = problems.length === 0;
+    if (inspected.ids.length && !inspected.invalid.length && !inspected.duplicates.length && !inspected.missing.length && inspected.ids.length <= maxCases) {
+      setDefaultScores(inspected.ids);
+      renderScores(inspected.ids);
+      validateScores(true);
+    } else {
+      scoreInputs = new Map();
+      byID("data-score-table").replaceChildren();
+      byID("data-preview-summary").textContent = "未生成测试点";
+      validateScores(true);
+    }
+    return uploadPreview;
+  }
 
   function editorSnapshot() {
     return JSON.stringify([...editorFields, "tags", "problem_type", "checker_mode", "checker_source"].map(name => editor.elements.namedItem(name)?.value || ""));
@@ -221,7 +510,8 @@
   function updateControls() {
     byID("problem-editor-fields").disabled = mutationPending || !adminAllowed;
     byID("problem-upload-fields").disabled = !adminAllowed || mutationPending || !selected || dirty;
-    byID("problem-upload-state").textContent = !adminAllowed ? "需要有效的超级管理员会话才能上传。" : mutationPending ? "正在处理操作，请稍候…" : !selected ? "请先创建题目，或从列表选择已保存的题目。" : dirty ? "题面有未保存修改。请先保存，或重新加载以放弃修改。" : "题面已保存，可以选择测试数据 ZIP 并上传。";
+    byID("problem-upload-state").textContent = !adminAllowed ? "需要有效的超级管理员会话才能上传。" : mutationPending ? "正在处理操作，请稍候…" : !selected ? "请先创建题目，或从列表选择已保存的题目。" : dirty ? "题面有未保存修改。请先保存，或重新加载以放弃修改。" : "题面已保存，可以拖入成对 .in/.out 文件，或选择 ZIP。";
+    byID("data-upload-submit").disabled = !adminAllowed || mutationPending || !selected || dirty || !uploadPreview?.valid;
     byID("problem-save-for-upload").hidden = !adminAllowed || mutationPending || (!!selected && !dirty);
     byID("problem-new").disabled = mutationPending;
     byID("problem-reload").disabled = mutationPending;
@@ -267,6 +557,10 @@
     message("problem-upload-message", "");
     message("problem-versions-message", "");
     byID("problem-versions-retry").hidden = true;
+    invalidateUpload();
+    upload.reset();
+    byID("data-import-mode").value = "replace";
+    updateCheckerWorkspace();
     savedEditor = editorSnapshot();
     updateControls();
   }
@@ -408,9 +702,28 @@
     return result;
   }
 
-  function editorChanged() { dirty = editorSnapshot() !== savedEditor; updateControls(); }
+  function editorChanged() { dirty = editorSnapshot() !== savedEditor; updateCheckerWorkspace(); updateControls(); }
   editor.addEventListener("input", editorChanged);
   editor.addEventListener("change", editorChanged);
+  editor.elements.namedItem("checker_mode").addEventListener("change", updateCheckerWorkspace);
+  editor.elements.namedItem("visibility").addEventListener("change", (event) => {
+    if (event.target.value === "public" && editor.elements.namedItem("status").value === "draft") {
+      editor.elements.namedItem("status").value = "published";
+      message("problem-editor-message", "选择公开可见时，题目会同时设为已发布，保存后出现在公共题库。");
+    }
+    editorChanged();
+  });
+  byID("checker-template").addEventListener("click", () => {
+    editor.elements.namedItem("checker_source").value = checkerTemplate;
+    editorChanged();
+  });
+  byID("checker-file").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 64 * 1024) { message("problem-editor-message", "SPJ 源码最多 64 KiB。"); return; }
+    editor.elements.namedItem("checker_source").value = await file.text();
+    editorChanged();
+  });
   byID("problem-save-for-upload").addEventListener("click", () => editor.requestSubmit());
   editor.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -436,49 +749,110 @@
     }
   });
 
+  async function reconcileUploadOutcome(id, previousRevision, previousDataVersion) {
+    try {
+      const latest = await request("/api/admin/problems/" + encodeURIComponent(id));
+      const exactNextVersion = latest.revision === previousRevision + 1 && latest.data_version === previousDataVersion + 1;
+      selected = latest;
+      byID("problem-editor-version").textContent = "修订 " + latest.revision + " · 题面版本 " + latest.statement_version;
+      byID("problem-current-data").textContent = latest.data_version ? "当前使用数据版本 v" + latest.data_version : "尚未上传测试数据。";
+      versionPage = 1;
+      await loadVersions();
+      if (exactNextVersion) {
+        message("problem-upload-message", `连接中断前服务器已完成发布，当前数据版本为 v${latest.data_version}。系统没有自动重复上传。`, true);
+      } else {
+        message("problem-upload-message", `服务器版本已变为 v${latest.data_version || 0}（修订 ${latest.revision}），但无法确认是否由本次上传产生。请核对下方版本记录；系统没有自动重试。`);
+      }
+    } catch {
+      message("problem-upload-message", "无法确认上传结果。请稍后刷新数据版本；系统没有自动重试。");
+    }
+  }
+
   upload.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (mutationPending || !selected || dirty) return;
-    const formData = new FormData(upload);
-    const archive = formData.get("archive");
-    try {
-      if (!(archive instanceof File) || archive.size === 0 || archive.size > 32 * 1024 * 1024) throw new APIError("请选择非空且不超过 32 MiB 的 ZIP 文件。", 400);
-      const rawScores = formData.get("scores");
-      if (new TextEncoder().encode(rawScores).length > 65536) throw new APIError("分值配置最多 64 KiB。", 400);
-      let scores;
-      try { scores = JSON.parse(rawScores); } catch { throw new APIError("测试点分值必须是有效的 JSON 对象。", 400); }
-      if (scores === null || Array.isArray(scores) || typeof scores !== "object" || Object.keys(scores).length === 0 || Object.keys(scores).length > 512 || Object.keys(scores).some((id) => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) || Object.values(scores).some((score) => !Number.isInteger(score) || score < 0)) throw new APIError("分值须包含 1～512 个测试点，键为测试点 ID，值为非负整数。", 400);
-      // Preserve the original numeric bytes rather than round-trip int64 scores
-      // through JavaScript Number. JSON syntax and decoded keys were checked above.
-      const literals = [...rawScores.matchAll(/:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g)].map((match) => match[1]);
-      if (literals.length !== Object.keys(scores).length || literals.some((value) => !/^-?\d+$/.test(value))) throw new APIError("分值须使用整数写法，测试点 ID 不能重复。", 400);
-      const exactScores = literals.map((value) => BigInt(value));
-      const total = exactScores.reduce((sum, value) => sum + value, 0n);
-      if (exactScores.some((value) => value < 0n || value > 9223372036854775807n) || total <= 0n || total > 9223372036854775807n) throw new APIError("每点分值和总分须在 64 位整数范围内，且总分大于零。", 400);
-    } catch (error) {
-      message("problem-upload-message", error.message);
+    const currentFiles = Array.from(byID("data-files").files || []);
+    const previewIsCurrent = uploadPreview && uploadPreview.files.length === currentFiles.length && currentFiles.every((file, index) => file === uploadPreview.files[index]);
+    const preview = previewIsCurrent ? uploadPreview : await refreshUploadPreview();
+    if (!preview?.valid || !validateScores(true)) {
+      message("problem-upload-message", "请先修正文件配对或分值。");
       return;
     }
     const id = selected.id;
-    formData.set("revision", String(selected.revision));
+    const previousRevision = selected.revision;
+    const previousDataVersion = selected.data_version || 0;
+    const formData = new FormData();
+    if (preview.kind === "zip") formData.append("archive", preview.files[0]);
+    else for (const file of preview.files) formData.append("files", file);
+    formData.append("scores", byID("data-scores").value);
+    formData.append("revision", String(previousRevision));
+    formData.append("mode", byID("data-import-mode").value);
     mutationPending = true;
     updateControls();
-    message("problem-upload-message", "正在校验并上传测试数据…", true);
+    setUploadProgress(1, "正在上传 1%");
+    message("problem-upload-message", "正在上传并在服务器完整校验文件、配对、分值与大小。", true);
+    byID("data-upload-cancel").hidden = false;
     try {
-      const version = await write("/api/admin/problems/" + encodeURIComponent(id) + "/data-versions", "POST", formData);
+      const version = await uploadWithProgress("/api/admin/problems/" + encodeURIComponent(id) + "/data-versions", formData);
       selected = { ...selected, revision: version.revision, data_version: version.data_version };
       byID("problem-editor-version").textContent = "修订 " + selected.revision + " · 题面版本 " + selected.statement_version;
       byID("problem-current-data").textContent = "当前使用数据版本 v" + version.data_version;
-      message("problem-upload-message", "数据版本 v" + version.data_version + " 已发布，共 " + number(version.case_count) + " 个测试点。", true);
+      message("problem-upload-message", "数据版本 v" + version.data_version + " 已发布，共 " + number(version.case_count) + " 个测试点。旧版本已保留。", true);
       upload.reset();
+      invalidateUpload();
       versionPage = 1;
       loadVersions();
     } catch (error) {
-      adminError(error, "problem-upload-message");
+      if (error.status === 0 || error.status >= 500) {
+        await reconcileUploadOutcome(id, previousRevision, previousDataVersion);
+      } else {
+        adminError(error, "problem-upload-message");
+      }
     } finally {
+      uploadXHR = null;
+      byID("data-upload-cancel").hidden = true;
       mutationPending = false;
       updateControls();
     }
+  });
+
+  byID("data-files").addEventListener("change", () => {
+    if (!mutationPending) refreshUploadPreview().catch((error) => message("problem-upload-message", error.message));
+  });
+  byID("data-import-mode").addEventListener("change", () => { if (uploadPreview?.valid) validateScores(true); });
+  byID("data-dropzone").addEventListener("click", () => { if (!mutationPending) byID("data-files").click(); });
+  byID("data-dropzone").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); byID("data-files").click(); }
+  });
+  for (const type of ["dragenter", "dragover"]) {
+    byID("data-dropzone").addEventListener(type, (event) => { event.preventDefault(); byID("data-dropzone").classList.add("dragging"); });
+  }
+  for (const type of ["dragleave", "drop"]) {
+    byID("data-dropzone").addEventListener(type, (event) => { event.preventDefault(); byID("data-dropzone").classList.remove("dragging"); });
+  }
+  byID("data-dropzone").addEventListener("drop", (event) => {
+    if (mutationPending || !event.dataTransfer?.files?.length) return;
+    const transfer = new DataTransfer();
+    for (const file of event.dataTransfer.files) transfer.items.add(file);
+    byID("data-files").files = transfer.files;
+    refreshUploadPreview().catch((error) => message("problem-upload-message", error.message));
+  });
+  byID("data-apply-score").addEventListener("click", () => {
+    const raw = byID("data-bulk-score").value.trim();
+    if (!/^(0|[1-9][0-9]*)$/.test(raw)) { message("problem-upload-message", "批量分值必须是非负整数。"); return; }
+    for (const id of scoreInputs.keys()) scoreInputs.set(id, raw);
+    for (const input of byID("data-score-table").querySelectorAll("input")) input.value = raw;
+    validateScores(true);
+  });
+  byID("data-copy-first-score").addEventListener("click", () => {
+    const first = scoreInputs.values().next().value;
+    if (first === undefined) return;
+    for (const id of scoreInputs.keys()) scoreInputs.set(id, first);
+    for (const input of byID("data-score-table").querySelectorAll("input")) input.value = first;
+    validateScores(true);
+  });
+  byID("data-upload-cancel").addEventListener("click", () => {
+    if (uploadXHR) uploadXHR.abort();
   });
 
   byID("problem-new").addEventListener("click", () => {

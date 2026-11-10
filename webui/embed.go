@@ -56,6 +56,7 @@ func Handler() (http.Handler, error) {
 		"/learning":         {Name: "community", Title: "学习社区"},
 		"/rankings":         {Name: "rankings", Title: "全局排行榜"},
 		"/contests":         {Name: "contests", Title: "比赛中心"},
+		"/contests/{id}":    {Name: "contests", Title: "比赛详情"},
 		"/admin/identities": {Name: "identities", Title: "身份管理"},
 		"/{$}":              {Name: "home", Title: "首页"},
 		"/register":         {Name: "register", Title: "创建账号"},
@@ -68,9 +69,9 @@ func Handler() (http.Handler, error) {
 		"/submissions/{id}": {Name: "submission", Title: "提交详情"},
 	} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
-			if p.Name == "problem" || p.Name == "submission" {
-				id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
-				if err != nil || id == 0 || strconv.FormatUint(id, 10) != r.PathValue("id") {
+			if rawID := r.PathValue("id"); rawID != "" {
+				id, err := strconv.ParseUint(rawID, 10, 64)
+				if err != nil || id == 0 || strconv.FormatUint(id, 10) != rawID {
 					http.NotFound(w, r)
 					return
 				}

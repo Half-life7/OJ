@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"biue/internal/auth"
@@ -23,7 +25,7 @@ type Operations interface {
 	Get(context.Context, Actor, uint64) (Problem, error)
 	Create(context.Context, Actor, Input, string) (Problem, error)
 	Update(context.Context, Actor, uint64, Input, string) (Problem, error)
-	Import(context.Context, Actor, uint64, uint64, testcase.Dataset, string) (DataVersion, error)
+	Import(context.Context, Actor, uint64, uint64, testcase.Dataset, string, string) (DataVersion, error)
 	ListDataVersions(context.Context, Actor, uint64, int, int) (VersionPage, error)
 	GetDataVersion(context.Context, Actor, uint64, uint64) (DataVersion, error)
 }
@@ -98,7 +100,15 @@ func respond(c *gin.Context, status, code int, message string, data any) {
 func problemError(c *gin.Context, err error) {
 	c.Abort()
 	switch {
-	case errors.Is(err, ErrInvalid), errors.Is(err, httpx.ErrInvalidJSON), errors.Is(err, testcase.ErrInvalidArchive), errors.Is(err, testcase.ErrInvalidPath), errors.Is(err, testcase.ErrPairing), errors.Is(err, testcase.ErrScore):
+	case errors.Is(err, testcase.ErrInvalidPath):
+		respond(c, 400, 40001, "测试文件名不合法；只接受根目录下由字母、数字、下划线或连字符组成的 .in/.out 文件", nil)
+	case errors.Is(err, testcase.ErrPairing):
+		respond(c, 400, 40001, "测试文件未成对、存在重名或大小写冲突", nil)
+	case errors.Is(err, testcase.ErrScore):
+		respond(c, 400, 40001, "测试点分值不完整或总分无效", nil)
+	case errors.Is(err, testcase.ErrInvalidArchive):
+		respond(c, 400, 40001, "测试数据 ZIP 无效或已损坏", nil)
+	case errors.Is(err, ErrInvalid), errors.Is(err, httpx.ErrInvalidJSON):
 		respond(c, 400, 40001, "请求参数或测试数据不合法", nil)
 	case errors.Is(err, testcase.ErrLimitExceeded):
 		respond(c, 413, 41301, "上传内容超过限制", nil)
@@ -249,7 +259,10 @@ func (h *Handler) version(c *gin.Context) {
 	respond(c, 200, 0, "success", result)
 }
 
-const maxImportRequest = 34 << 20
+const (
+	maxImportRequest = 66 << 20
+	importBudget     = 2 * time.Minute
+)
 
 func (h *Handler) importData(c *gin.Context) {
 	id, err := positive(c.Param("id"))
@@ -269,6 +282,10 @@ func (h *Handler) importData(c *gin.Context) {
 		problemError(c, testcase.ErrLimitExceeded)
 		return
 	}
+	controller := http.NewResponseController(c.Writer)
+	deadline := time.Now().Add(importBudget)
+	_ = controller.SetReadDeadline(deadline)
+	_ = controller.SetWriteDeadline(deadline)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxImportRequest)
 	reader, err := c.Request.MultipartReader()
 	if err != nil {
@@ -276,9 +293,12 @@ func (h *Handler) importData(c *gin.Context) {
 		return
 	}
 	var archive []byte
+	var files []testcase.File
 	var scores map[string]int64
 	var revision uint64
+	mode := ImportReplace
 	seen := make(map[string]bool)
+	totalFileBytes := int64(0)
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -289,7 +309,35 @@ func (h *Handler) importData(c *gin.Context) {
 			return
 		}
 		name := part.FormName()
-		if seen[name] || (name != "archive" && name != "scores" && name != "revision") {
+		if name == "files" {
+			_, disposition, dispositionErr := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+			rawName := disposition["filename"]
+			if dispositionErr != nil || rawName == "" || rawName != part.FileName() {
+				problemError(c, testcase.ErrInvalidPath)
+				return
+			}
+			if len(files) >= testcase.DefaultLimits().MaxCases*2 {
+				problemError(c, testcase.ErrLimitExceeded)
+				return
+			}
+			data, readErr := io.ReadAll(io.LimitReader(part, testcase.DefaultLimits().MaxFileBytes+1))
+			if readErr != nil {
+				importReadError(c, readErr)
+				return
+			}
+			if int64(len(data)) > testcase.DefaultLimits().MaxFileBytes || totalFileBytes+int64(len(data)) > testcase.DefaultLimits().MaxTotalBytes {
+				problemError(c, testcase.ErrLimitExceeded)
+				return
+			}
+			totalFileBytes += int64(len(data))
+			files = append(files, testcase.File{Name: rawName, Data: data})
+			if err := part.Close(); err != nil {
+				importReadError(c, err)
+				return
+			}
+			continue
+		}
+		if seen[name] || (name != "archive" && name != "scores" && name != "revision" && name != "mode") {
 			problemError(c, ErrInvalid)
 			return
 		}
@@ -332,6 +380,12 @@ func (h *Handler) importData(c *gin.Context) {
 				problemError(c, err)
 				return
 			}
+		case "mode":
+			mode = string(bytes.TrimSpace(data))
+			if mode != ImportReplace && mode != ImportMerge {
+				problemError(c, ErrInvalid)
+				return
+			}
 		}
 	}
 	// MultipartReader stops at the final boundary. Count any epilogue too,
@@ -340,16 +394,21 @@ func (h *Handler) importData(c *gin.Context) {
 		importReadError(c, err)
 		return
 	}
-	if !seen["archive"] || !seen["scores"] || !seen["revision"] {
+	if !seen["scores"] || !seen["revision"] || (seen["archive"] == (len(files) > 0)) {
 		problemError(c, ErrInvalid)
 		return
 	}
-	dataset, err := testcase.Parse(c.Request.Context(), bytes.NewReader(archive), int64(len(archive)), scores, testcase.DefaultLimits())
+	var dataset testcase.Dataset
+	if seen["archive"] {
+		dataset, err = testcase.Parse(c.Request.Context(), bytes.NewReader(archive), int64(len(archive)), scores, testcase.DefaultLimits())
+	} else {
+		dataset, err = testcase.ParseFiles(c.Request.Context(), files, scores, testcase.DefaultLimits())
+	}
 	if err != nil {
 		problemError(c, err)
 		return
 	}
-	result, err := h.service.Import(c.Request.Context(), currentActor(c), id, revision, dataset, server.RequestID(c.Request.Context()))
+	result, err := h.service.Import(c.Request.Context(), currentActor(c), id, revision, dataset, mode, server.RequestID(c.Request.Context()))
 	if err != nil {
 		problemError(c, err)
 		return

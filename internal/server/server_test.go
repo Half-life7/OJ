@@ -129,10 +129,29 @@ func testCSRFAndOrigin(t *testing.T, publicURL string) {
 			if w.Code != tc.status {
 				t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
 			}
+			if tc.name == "cross-site" && (!strings.Contains(w.Body.String(), "请求来源不受信任") || !strings.Contains(w.Body.String(), "request_id")) {
+				t.Fatalf("origin error lacks safe guidance or request ID: %s", w.Body.String())
+			}
 		})
 	}
 	if called != 1 {
 		t.Fatalf("unsafe requests reached handler: called %d times", called)
+	}
+}
+
+func TestProblemUploadGetsASeparateBoundedContext(t *testing.T) {
+	var deadline time.Time
+	r := gin.New()
+	r.Use(observe(slog.New(slog.NewJSONHandler(io.Discard, nil))))
+	r.POST("/api/admin/problems/:id/data-versions", func(c *gin.Context) {
+		deadline, _ = c.Request.Context().Deadline()
+		c.Status(http.StatusNoContent)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/problems/7/data-versions", nil))
+	remaining := time.Until(deadline)
+	if w.Code != http.StatusNoContent || !deadline.After(time.Now().Add(110*time.Second)) || remaining > 2*time.Minute {
+		t.Fatalf("upload deadline=%v remaining=%v status=%d", deadline, remaining, w.Code)
 	}
 }
 

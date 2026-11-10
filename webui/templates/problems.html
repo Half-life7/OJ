@@ -53,7 +53,16 @@
       <form id="problem-editor-form">
         <fieldset id="problem-editor-fields">
           <label for="edit-title">题目标题 <span class="required">*</span></label><input id="edit-title" name="title" required maxlength="200">
-          <label for="edit-problem-type">题型<select id="edit-problem-type" name="problem_type"><option value="programming">程序题</option><option value="output_only">输出型（提交 case_id 到输出的 JSON）</option></select></label><label for="edit-checker-mode">比较器<select id="edit-checker-mode" name="checker_mode"><option value="tokens">空白分隔精确比较</option><option value="spj">Python Special Judge</option></select></label><label for="edit-checker-source">SPJ 源码（管理员专用）<textarea id="edit-checker-source" name="checker_source" rows="10" spellcheck="false"></textarea></label><p>SPJ 从 stdin 读取含 input/expected/output（base64）的 JSON，只能输出 AC 或 WA；源码随题面版本固定。</p><label for="edit-description">题目描述 <span class="required">*</span></label><textarea id="edit-description" name="description" required rows="9" aria-describedby="description-help"></textarea><p id="description-help" class="field-help">纯文本，最多 64 KiB。换行将原样显示。</p>
+          <label for="edit-problem-type">题型<select id="edit-problem-type" name="problem_type"><option value="programming">程序题</option><option value="output_only">输出型（提交 case_id 到输出的 JSON）</option></select></label><label for="edit-checker-mode">比较器<select id="edit-checker-mode" name="checker_mode"><option value="tokens">空白分隔精确比较</option><option value="spj">Python Special Judge</option></select></label>
+          <div id="checker-workspace" hidden>
+            <div class="problem-panel-heading"><div><span class="card-number">SPECIAL JUDGE</span><p class="field-help">从按钮载入最小模板，或粘贴/选择本地 `.py` 文件。保存后使用普通提交实际调用隔离判题器自测。</p></div><div class="page-actions"><button id="checker-template" type="button" class="button secondary">载入模板</button><label class="button secondary" for="checker-file">导入 .py</label><input id="checker-file" type="file" accept=".py,text/x-python,text/plain" hidden></div></div>
+            <label for="edit-checker-source">SPJ 源码（管理员专用）<textarea id="edit-checker-source" name="checker_source" rows="12" spellcheck="false"></textarea></label>
+            <p class="field-help">stdin 为含 input / expected / output 的 base64 JSON；程序只能输出 AC 或 WA。源码异常不会向选手泄漏诊断。</p>
+            <p class="field-help">保存会生成新题面版本；已有提交、比赛快照和重判继续使用其固定版本。需要新规则时创建新提交，旧快照不会被覆盖。</p>
+            <div class="problem-field-pair"><div><label for="checker-example-input">自测输入预览</label><textarea id="checker-example-input" rows="4" readonly></textarea></div><div><label for="checker-example-output">自测预期输出预览</label><textarea id="checker-example-output" rows="4" readonly></textarea></div></div>
+            <a id="checker-self-test" class="button primary" href="/problems" target="_blank" rel="noopener" hidden>在新页面实际提交自测</a>
+          </div>
+          <label for="edit-description">题目描述 <span class="required">*</span></label><textarea id="edit-description" name="description" required rows="9" aria-describedby="description-help"></textarea><p id="description-help" class="field-help">纯文本，最多 64 KiB。换行将原样显示。</p>
           <label for="edit-input-format">输入格式</label><textarea id="edit-input-format" name="input_format" rows="4"></textarea>
           <label for="edit-output-format">输出格式</label><textarea id="edit-output-format" name="output_format" rows="4"></textarea>
           <div class="problem-field-pair"><div><label for="edit-sample-input">样例输入</label><textarea id="edit-sample-input" name="sample_input" rows="5" spellcheck="false"></textarea></div><div><label for="edit-sample-output">样例输出</label><textarea id="edit-sample-output" name="sample_output" rows="5" spellcheck="false"></textarea></div></div>
@@ -73,10 +82,27 @@
         <p id="problem-upload-state" role="status">请先创建或选择已保存的题目。</p>
         <button id="problem-save-for-upload" type="button" class="button secondary" hidden>保存题面后启用上传</button>
         <form id="problem-upload-form"><fieldset id="problem-upload-fields" disabled aria-describedby="problem-upload-state">
-          <label for="data-archive">测试数据 ZIP</label><input id="data-archive" name="archive" type="file" accept=".zip,application/zip" required aria-describedby="archive-help"><p id="archive-help" class="field-help">最多 32 MiB，根目录中成对放置 1.in / 1.out 等文件。最多 512 个测试点。</p>
-          <label for="data-scores">测试点分值</label><textarea id="data-scores" name="scores" rows="6" required spellcheck="false" placeholder='{"1":40,"2":60}' aria-describedby="scores-help"></textarea><p id="scores-help" class="field-help">JSON 对象，键与文件中的测试点 ID 完全一致，分值为非负整数且总分大于零。</p>
-          <button class="button primary full-width" type="submit">上传并发布新版本</button>
-        </fieldset><p id="problem-upload-message" class="form-message" role="status" aria-live="polite" hidden></p></form>
+          <label for="data-files">测试文件</label>
+          <div id="data-dropzone" class="upload-dropzone" tabindex="0" role="button">
+            <strong>选择或拖入 .in / .out 文件，也可以选择一个 ZIP</strong>
+            <span>直接文件上限 16 MiB/个、合计 64 MiB；根目录文件名例如 1.in、1.out。最多 512 个测试点。</span>
+          </div>
+          <input id="data-files" name="files" type="file" accept=".zip,.in,.out,application/zip,text/plain" multiple required aria-describedby="archive-help">
+          <p id="archive-help" class="field-help">成对文件名会生成测试点预览；ZIP 读取目录名称后也按相同规则校验。</p>
+          <label for="data-import-mode">发布方式</label>
+          <select id="data-import-mode" name="mode"><option value="replace">新建完整数据集（未选中的旧测试点移除）</option><option value="merge">在当前数据集上增补 / 替换这些 ID（其他旧测试点保留）</option></select>
+          <p class="field-help">两种方式都会生成不可变新版本；合并时同 ID 文件与分值被替换，其他旧测试点保留。</p>
+          <div id="data-preview" class="upload-preview" hidden aria-live="polite">
+            <p id="data-preview-summary"></p>
+            <p id="data-preview-error" class="field-error" role="alert" hidden></p>
+            <div class="score-bulk"><label for="data-bulk-score">批量赋分</label><input id="data-bulk-score" type="number" min="0" step="1" inputmode="numeric"><button id="data-apply-score" class="button secondary" type="button">应用到全部</button><button id="data-copy-first-score" class="button secondary" type="button">复制首项</button></div>
+            <div id="data-score-table" class="data-score-table"></div>
+          </div>
+          <textarea id="data-scores" name="scores" hidden required spellcheck="false"></textarea>
+          <progress id="data-upload-progress" max="100" value="0" hidden></progress>
+          <p id="data-upload-progress-label" class="field-help" hidden></p>
+          <div class="upload-actions"><button id="data-upload-submit" class="button primary" type="submit">上传并发布新版本</button></div>
+        </fieldset><button id="data-upload-cancel" class="button secondary upload-cancel" type="button" hidden>取消上传</button><p id="problem-upload-message" class="form-message" role="status" aria-live="polite" hidden></p></form>
       </section>
       <section id="problem-versions-panel" class="profile-card" hidden><div class="card-heading"><span class="card-number">DATA HISTORY</span><h2>数据版本</h2><p id="problem-current-data">尚未上传测试数据。</p></div><p id="problem-versions-message" class="form-message" role="status" aria-live="polite" hidden></p><button id="problem-versions-retry" class="button secondary" type="button" hidden>重新加载版本</button><div id="problem-version-list" class="problem-version-list"></div><div class="problem-pagination"><button id="version-prev" class="button secondary" type="button">上一页</button><p id="version-page-info" role="status" aria-live="polite"></p><button id="version-next" class="button secondary" type="button">下一页</button></div><div id="problem-version-detail" hidden></div></section>
     </aside>

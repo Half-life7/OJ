@@ -52,6 +52,13 @@ type Case struct {
 	Score  int64
 }
 
+// File is one directly uploaded testcase file. Names must be root-level
+// *.in/*.out names and are validated with the same rules as ZIP entries.
+type File struct {
+	Name string
+	Data []byte
+}
+
 type Dataset struct {
 	Cases      []Case
 	Digest     [32]byte
@@ -139,6 +146,63 @@ func Parse(ctx context.Context, src io.ReaderAt, size int64, scores map[string]i
 	}
 	if err := ctx.Err(); err != nil {
 		return Dataset{}, err
+	}
+	result.Digest = digest(result.Cases)
+	if err := ctx.Err(); err != nil {
+		return Dataset{}, err
+	}
+	return result, nil
+}
+
+// ParseFiles validates directly selected testcase files without constructing or
+// trusting a ZIP. It returns no partial dataset and applies the same pairing,
+// name, score, per-file and total byte limits as Parse.
+func ParseFiles(ctx context.Context, files []File, scores map[string]int64, limits Limits) (Dataset, error) {
+	if err := validateLimits(limits); err != nil {
+		return Dataset{}, err
+	}
+	if ctx == nil || len(files) == 0 {
+		return Dataset{}, ErrPairing
+	}
+	if err := ctx.Err(); err != nil {
+		return Dataset{}, err
+	}
+	if len(files) > limits.MaxCases*2 {
+		return Dataset{}, fmt.Errorf("%w: file count", ErrLimitExceeded)
+	}
+	entries := make([]entry, 0, len(files))
+	byName := make(map[string][]byte, len(files))
+	var declared int64
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return Dataset{}, err
+		}
+		if _, err := validateName(file.Name); err != nil {
+			return Dataset{}, err
+		}
+		if _, duplicate := byName[file.Name]; duplicate {
+			return Dataset{}, fmt.Errorf("%w: duplicate file", ErrPairing)
+		}
+		if int64(len(file.Data)) > limits.MaxFileBytes || int64(len(file.Data)) > limits.MaxTotalBytes-declared {
+			return Dataset{}, fmt.Errorf("%w: file bytes", ErrLimitExceeded)
+		}
+		declared += int64(len(file.Data))
+		entries = append(entries, entry{name: file.Name})
+		byName[file.Name] = file.Data
+	}
+	ids, totalScore, err := validatePairsAndScores(entries, scores)
+	if err != nil {
+		return Dataset{}, err
+	}
+	result := Dataset{Cases: make([]Case, 0, len(ids)), TotalScore: totalScore}
+	for _, id := range ids {
+		input := byName[id+".in"]
+		output := byName[id+".out"]
+		result.TotalBytes += int64(len(input) + len(output))
+		result.Cases = append(result.Cases, Case{ID: id, Input: input, Output: output, Score: scores[id]})
+	}
+	if result.TotalBytes > limits.MaxTotalBytes {
+		return Dataset{}, fmt.Errorf("%w: total bytes", ErrLimitExceeded)
 	}
 	result.Digest = digest(result.Cases)
 	if err := ctx.Err(); err != nil {

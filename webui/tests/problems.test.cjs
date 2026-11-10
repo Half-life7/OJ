@@ -53,7 +53,15 @@ class Element {
 }
 
 class TestFile {
-  constructor(size) { this.size = size; }
+  constructor(size, name = "1.in", bytes = null) {
+    this.size = size;
+    this.name = name;
+    this.bytes = bytes;
+  }
+  async arrayBuffer() {
+    if (this.bytes) return this.bytes.buffer.slice(this.bytes.byteOffset, this.bytes.byteOffset + this.bytes.byteLength);
+    return new ArrayBuffer(this.size);
+  }
 }
 
 class TestFormData {
@@ -63,6 +71,14 @@ class TestFormData {
   }
   get(key) { return this.data.get(key) ?? null; }
   set(key, value) { this.data.set(key, value); }
+  append(key, value) {
+    if (key === "files") {
+      if (!this.data.has(key)) this.data.set(key, []);
+      this.data.set(key, [...this.data.get(key), value]);
+    } else {
+      this.data.set(key, value);
+    }
+  }
   entries() { return this.data.entries(); }
   [Symbol.iterator]() { return this.entries(); }
 }
@@ -74,7 +90,7 @@ const sample = {
   statement_version: 1, data_version: 0, created_at: "2026-11-09T00:00:00Z", updated_at: "2026-11-09T00:00:00Z",
 };
 
-function boot(page, responses, pathname = "/problems", search = "") {
+function boot(page, responses, pathname = "/problems", search = "", options = {}) {
   const elements = new Map();
   for (const match of template.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
     const element = new Element(match[1]);
@@ -102,7 +118,27 @@ function boot(page, responses, pathname = "/problems", search = "") {
   };
   const window = { location: { pathname, search }, history: { replaceState() {} }, setTimeout, clearTimeout, addEventListener() {}, confirm: () => true };
   const context = {
-    document, window, URLSearchParams, TextEncoder, AbortController, FormData: TestFormData, File: TestFile,
+    document, window, URLSearchParams, TextEncoder, TextDecoder, AbortController, FormData: TestFormData, File: TestFile,
+    XMLHttpRequest: class {
+      constructor() {
+        this.upload = {};
+        this.headers = {};
+      }
+      open(method, url) { this.method = method; this.url = url; }
+      setRequestHeader(key, value) { this.headers[key] = value; }
+      getResponseHeader(key) { return key === "X-Request-ID" ? "upload-request-id" : null; }
+      send(body) {
+        calls.push({ url: this.url, method: this.method, body, headers: this.headers });
+        this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
+        setImmediate(async () => {
+          const result = await responses(this.url, { method: this.method, body, headers: this.headers });
+          this.status = result.status || 200;
+          this.responseText = JSON.stringify({ code: this.status < 300 ? 0 : this.status * 100 + 1, message: result.message || "请求失败", data: result.data ?? null });
+          this.onload?.();
+        });
+      }
+      abort() { this.onabort?.(); }
+    },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       const result = await responses(url, options);
@@ -112,6 +148,15 @@ function boot(page, responses, pathname = "/problems", search = "") {
   };
   vm.runInNewContext(script, context, { filename: "problems.js" });
   return { elements, calls, document, window };
+}
+
+function inputs(root) {
+  const found = [];
+  for (const child of root.children) {
+    if (child.tag === "input") found.push(child);
+    found.push(...inputs(child));
+  }
+  return found;
 }
 
 async function settle() {
@@ -216,11 +261,11 @@ test("reverting a dirty statement re-enables upload without an unnecessary save"
   ui.elements.get("edit-title").value = sample.title;
   ui.elements.get("problem-editor-form").trigger("input");
   assert.equal(ui.elements.get("problem-upload-fields").disabled, false);
-  assert.match(ui.elements.get("problem-upload-state").textContent, /可以选择/);
+  assert.match(ui.elements.get("problem-upload-state").textContent, /拖入成对/);
   assert.equal(ui.calls.some(call => call.method !== "GET"), false);
 });
 
-test("test data upload sends multipart fields with the current revision", async () => {
+test("direct paired files generate scores and upload with the current revision", async () => {
   const ui = boot("admin-problems", async (url, options) => {
     if (url === "/api/users/me") return { data: { global_role: "super_admin" } };
     if (url.startsWith("/api/admin/problems?")) return { data: { items: [sample], page: 1, limit: 20, total: 1 } };
@@ -234,23 +279,27 @@ test("test data upload sends multipart fields with the current revision", async 
   await settle();
   await ui.elements.get("admin-problem-list").querySelectorAll("button")[0].trigger("click");
   await settle();
-  ui.elements.get("data-archive").file = new TestFile(100);
-  ui.elements.get("data-scores").value = '{"1":9007199254740993}';
+  ui.elements.get("data-files").files = [new TestFile(3, "1.in"), new TestFile(2, "1.out")];
+  ui.elements.get("data-files").handlers.get("change")();
+  await settle();
+  assert.match(ui.elements.get("data-preview-summary").textContent, /1 个测试点/);
+  assert.equal(ui.elements.get("data-upload-submit").disabled, false);
   await ui.elements.get("problem-upload-form").trigger("submit");
   await settle();
   const sent = ui.calls.find((call) => call.method === "POST");
   assert.ok(sent.body instanceof TestFormData);
   assert.equal(sent.body.get("revision"), "1");
-  assert.equal(sent.body.get("scores"), '{"1":9007199254740993}', "int64 scores must not be rounded through JavaScript Number");
-  assert.ok(sent.body.get("archive") instanceof TestFile);
+  assert.equal(sent.body.get("scores"), '{"1":100}');
+  assert.ok(sent.body.get("files").every((file) => file instanceof TestFile));
+  assert.equal(sent.body.get("mode"), "replace");
   assert.equal(sent.headers["X-CSRF-Token"], "csrf-test-token");
   assert.equal(sent.headers["Content-Type"], undefined, "browser must generate the multipart boundary");
   assert.match(ui.elements.get("problem-current-data").textContent, /v1/);
   assert.match(ui.elements.get("problem-editor-version").textContent, /修订 2/);
 });
 
-test("duplicate, fractional, overflowing and empty scores do not send an upload", async () => {
-  for (const scores of ['{"1":40,"1":60}', '{"1":1.5}', '{"1":1e2}', '{"1":9223372036854775808}', '{"1":9223372036854775807,"2":1}', '{"1":0}', '{}']) {
+test("score table accepts zero points but blocks invalid and all-zero totals", async () => {
+  for (const scores of [["-1"], ["1.5"], ["9223372036854775808"], ["0", "0"]]) {
     const ui = boot("admin-problems", async (url, options) => {
       assert.equal(options.method, "GET", "invalid local input must not write");
       if (url === "/api/users/me") return { data: { global_role: "super_admin" } };
@@ -262,12 +311,17 @@ test("duplicate, fractional, overflowing and empty scores do not send an upload"
     await settle();
     await ui.elements.get("admin-problem-list").querySelectorAll("button")[0].trigger("click");
     await settle();
-    ui.elements.get("data-archive").file = new TestFile(100);
-    ui.elements.get("data-scores").value = scores;
+    ui.elements.get("data-files").files = scores.length === 1
+      ? [new TestFile(1, "1.in"), new TestFile(1, "1.out")]
+      : [new TestFile(1, "1.in"), new TestFile(1, "1.out"), new TestFile(1, "2.in"), new TestFile(1, "2.out")];
+    ui.elements.get("data-files").handlers.get("change")();
+    await settle();
+    const fields = inputs(ui.elements.get("data-score-table")).filter((input) => input.attributes.has("data-score-id"));
+    fields.forEach((input, index) => { input.value = scores[index]; input.handlers.get("input")(); });
     await ui.elements.get("problem-upload-form").trigger("submit");
     await settle();
-    assert.equal(ui.calls.some((call) => call.method !== "GET"), false, scores);
-    assert.equal(ui.elements.get("problem-upload-message").hidden, false, scores);
+    assert.equal(ui.calls.some((call) => call.method === "POST"), false, scores);
+    assert.equal(ui.elements.get("data-preview-error").hidden, false, scores);
     assert.equal(ui.elements.get("problem-upload-fields").disabled, false, scores);
   }
 });

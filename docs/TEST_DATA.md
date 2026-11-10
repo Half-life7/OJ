@@ -2,6 +2,8 @@
 
 `internal/testcase` 是纯标准库的内存校验模块。它读取 ZIP、验证测试点及分值并返回内容摘要，不创建文件、不连接数据库、不启动程序，也不分配 `data_version`。
 
+题目上传同时支持直接选择多个 `.in/.out` 文件。HTTP 层先用 `ParseFiles` 执行与 ZIP 相同的名称、配对、大小、分值和摘要校验，再进入同一个不可变数据版本发布流程；“在当前数据集上合并”由服务端读取当前版本、按测试点 ID 替换或追加后生成完整新版本。该模式不把旧测试内容发送给浏览器，未出现在本次上传中的旧 ID 保留其文件与分值。
+
 2A 模块本身不提供上传 API、页面、持久化或比赛版本锁定。2B 已在 [题目管理服务](PROBLEMS.md) 接入权限校验、有界上传和不可变文件/数据库版本；比赛锁定与判题仍属后续批次。本文末尾的验证记录保留为独立校验器的历史验收，完整接线结果见 CHANGELOG.md。
 
 ## 调用接口
@@ -14,6 +16,15 @@ dataset, err := testcase.Parse(
     map[string]int64{"1": 40, "2": 60},
     testcase.DefaultLimits(),
 )
+```
+
+直接文件调用：
+
+```go
+dataset, err := testcase.ParseFiles(ctx, []testcase.File{
+    {Name: "1.in", Data: input},
+    {Name: "1.out", Data: output},
+}, scores, testcase.DefaultLimits())
 ```
 
 - 调用者提供有效上下文、在整个解析期间保持不变的 `io.ReaderAt`、准确的归档长度、独立分值表以及显式限额。零值 `Limits` 不代表无限制，也不会悄悄采用默认配置。
@@ -57,7 +68,7 @@ ZIP 成员排列、压缩方式和时间戳不影响摘要；ID、输入、输�
 
 | Limits 字段 | 默认值 | 约束 |
 | --- | --- | --- |
-| `MaxArchiveBytes` | 32 MiB | 实际归档字节数上限 |
+| `MaxArchiveBytes` | 32 MiB | ZIP 实际归档字节数上限；直接文件上传的 HTTP 总预算另行设为 66 MiB |
 | `MaxFileBytes` | 16 MiB | 每个输入或输出成员的展开字节上限 |
 | `MaxTotalBytes` | 64 MiB | 全部输入输出展开字节之和 |
 | `MaxCases` | 512 | 成对测试点数量，成员最多为两倍 |

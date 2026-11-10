@@ -14,12 +14,14 @@
 
 ## 页面和接口
 
-`/learning` 为题单、讨论和题解的统一入口，按类型/题目/比赛筛选，可切换我的内容、收藏和待审队列。`/rankings` 固定提供三个全局榜，按 50 条分页并每 30 秒刷新。题目页提供日常通过人数、通过率、本人通过状态及讨论/题解入口。
+`/learning` 为题单、讨论和题解的统一入口，按类型/题目/比赛筛选，可切换我的内容、收藏和待审队列。游客看到登录引导，比赛临时账号看到只读范围说明；发布表单只在永久账号主动新建或编辑时显示。详情响应携带本人的 `liked/favorited/can_edit/can_delete/can_review`，前端只绘制当前可执行的操作，服务端仍独立执行对象、比赛和审核权限。列表、详情与回复使用独立请求代次；分页失败可重试当前游标，迟到响应不能覆盖新选择。题单/讨论编辑在切换和离开时保留本标签页草稿，不保存密码类字段。
+
+`/rankings` 固定提供三个全局榜，按 50 条分页并每 30 秒刷新；每次渲染核对榜单类型、周期、页码和请求代次。题目页提供日常通过人数、通过率、本人通过状态及讨论/题解入口。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | GET | `/api/community` | kind=list/discussion/solution；after 游标；problem_id/contest_id/parent_id；mine/favorites/review=1 |
-| GET | `/api/community/:id` | 受权限保护的正文、安全 HTML、题单有序题目和计数 |
+| GET | `/api/community/:id` | 受权限保护的正文、安全 HTML、题单有序题目、计数、本人互动状态和可执行操作 |
 | POST / PUT | `/api/community` / `/api/community/:id` | 创建/编辑，编辑必须携带 revision |
 | POST | `/api/community/:id/actions` | action、revision；delete/approve/reject/favorite/unfavorite/like/unlike |
 | GET | `/api/practice/problems/:id` | submissions、accepted、people、acceptance_rate（0～1）、solved |

@@ -39,6 +39,22 @@ sudo bash deploy.sh logs
 
 可选首次参数：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TIMEZONE、OJ_JUDGE_CONCURRENCY、OJ_EDGE_SUBNET、OJ_NGINX_IP。更换数据目录或项目名后，所有维护命令必须传入相同值。已有配置的日常修改在 DATA_DIR/config/.env 进行，install 不覆盖；改端口/时区/并发后运行 restart，改入口协议/证书后运行 install 并重启。数据库口令不能只修改 env 而不修改数据库账号。
 
+## 公网来源与日志定位
+
+写请求的 `Origin` 必须与持久配置的 `PUBLIC_URL` 在协议、主机和端口上完全一致。来源校验不会通过代理推断地址，也不会在报错时关闭，避免跨站写请求绕过保护。只查看可安全展示的公网来源：
+
+```bash
+sudo bash deploy.sh public-info
+```
+
+浏览器使用 `https://oj.example.edu`、反向代理终止 TLS 时，`PUBLIC_URL` 也必须写该 HTTPS 地址；只配置 `OJ_PUBLIC_URL` 不会覆盖已经保存的配置。修改并重启：
+
+```bash
+sudo bash deploy.sh public-url https://oj.example.edu
+```
+
+切换到 HTTPS 时还需要已有公网证书或同时提供 `OJ_TLS_CERT`/`OJ_TLS_KEY`；命令会在写入配置前检查是否存在可用证书，并重新生成 Nginx 配置。外部 TLS 代理必须保留浏览器访问的 `Host`，并传递 `X-Forwarded-Proto`。Nginx 的 `$http_host` 保留了非默认端口。错误来源响应和页面提示附带请求 ID；Web JSON 日志中的 `request_id` 可用于关联同一请求，Nginx 访问日志记录方法、URI、状态和耗时，审计日志记录已授权的业务写入。分别使用 `sudo bash deploy.sh logs`、数据目录 `logs/` 与 MySQL `audit_logs` 排查；不要把完整 `.env`、会话 Cookie、密码或密钥发送到聊天或工单。
+
 生产 Compose 使用独立 bind 目录保存 mysql、redis、problem-data、runner-data、uploads、config、logs、backups，数据和源码分离；语言与应用镜像版本固定。业务容器均不挂 Docker Socket，只有 Runner 挂载；Redis 初始化临时容器只增加 CHOWN 权限，运行时仍 cap-drop ALL。所有常驻服务均有健康检查和 unless-stopped 策略。
 
 ### 中国大陆网络与镜像拉取失败

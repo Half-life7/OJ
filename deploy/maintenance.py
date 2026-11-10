@@ -51,6 +51,18 @@ def generate(path,root,gid):
     for key in ('MYSQL_PASSWORD','MYSQL_ROOT_PASSWORD','REDIS_PASSWORD','JWT_SECRET','CSRF_SECRET','APP_ENCRYPTION_KEY','RUNNER_TOKEN'):v[key]=secrets.token_hex(32)
     check(v);write_env(path,v)
 
+def public_info(path):
+    v=read_env(path);check(v)
+    url=urlsplit(v['PUBLIC_URL'])
+    origin=f"{url.scheme}://{url.netloc}"
+    print(f"PUBLIC_URL={v['PUBLIC_URL']}")
+    print(f"EXPECTED_ORIGIN={origin}")
+    print(f"BROWSER_SCHEME={url.scheme}")
+    print(f"BROWSER_HOST={url.hostname}")
+    print(f"BROWSER_PORT={url.port or ('443' if url.scheme == 'https' else '80')}")
+    print("修改公网来源：sudo bash deploy.sh public-url https://你的域名")
+    print("外部 TLS 代理必须保留浏览器 Host，并转发 X-Forwarded-Proto；PUBLIC_URL 必须写浏览器实际访问的协议、主机和端口。")
+
 def verify_archive(directory):
     directory=Path(directory).resolve();manifest=(directory/'SHA256SUMS').read_text().splitlines()
     expected={'database.sql.gz','files.tar.gz'};seen=set()
@@ -91,6 +103,7 @@ def main():
         v=read_env(a[1]);v['DATA_DIR']=a[2];v['DOCKER_GID']=a[3];check(v);write_env(a[1],v)
     elif command=='public-url':
         v=read_env(a[1]);v['PUBLIC_URL']=a[2];check(v);write_env(a[1],v)
+    elif command=='public-info':public_info(a[1])
     elif command=='verify':verify_archive(a[1])
     elif command=='restore-sql':restore_sql(a[1])
     elif command=='prune':

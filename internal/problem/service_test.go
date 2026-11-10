@@ -26,15 +26,23 @@ var testAdmin = Actor{ID: 7, Role: "super_admin"}
 var testNow = time.Date(2026, 11, 9, 5, 0, 0, 0, time.UTC)
 
 type recordingStore struct {
-	calls   int
-	dataset testcase.Dataset
-	err     error
+	calls       int
+	reads       int
+	dataset     testcase.Dataset
+	readDataset testcase.Dataset
+	err         error
+	readErr     error
 }
 
 func (d *recordingStore) Write(_ context.Context, dataset testcase.Dataset) (string, error) {
 	d.calls++
 	d.dataset = dataset
 	return strings.Repeat("a", 32), d.err
+}
+
+func (d *recordingStore) Read(_ context.Context, _ string) (testcase.Dataset, error) {
+	d.reads++
+	return d.readDataset, d.readErr
 }
 
 type serviceFixture struct {
@@ -121,6 +129,18 @@ func TestNormalizeInputDefaultsAndOriginalContent(t *testing.T) {
 	}
 }
 
+func TestPublicVisibilityPublishesTheProblem(t *testing.T) {
+	in := validInput()
+	in.Visibility = "public"
+	got, err := normalizeInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "published" || got.Visibility != "public" {
+		t.Fatalf("public visibility remained %q/%q", got.Status, got.Visibility)
+	}
+}
+
 func TestInputValidationBeforeDatabase(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -160,7 +180,7 @@ func TestMutationsAndDataMetadataRequireAdmin(t *testing.T) {
 		ctx := context.Background()
 		_, createErr := f.service.Create(ctx, actor, validInput(), "request-id")
 		_, updateErr := f.service.Update(ctx, actor, 42, validInput(), "request-id")
-		_, importErr := f.service.Import(ctx, actor, 42, 1, validDataset(), "request-id")
+		_, importErr := f.service.Import(ctx, actor, 42, 1, validDataset(), ImportReplace, "request-id")
 		_, listErr := f.service.ListDataVersions(ctx, actor, 42, 1, 20)
 		_, getErr := f.service.GetDataVersion(ctx, actor, 42, 1)
 		for _, err := range []error{createErr, updateErr, importErr, listErr, getErr} {
@@ -301,7 +321,7 @@ func TestImportAppendsVersionAndReturnsOnlyMetadata(t *testing.T) {
 	expectImportPrefix(t, f.mock, dataset)
 	expectProblemAudit(f.mock, "problem.data_import").WillReturnResult(sqlmock.NewResult(1, 1))
 	f.mock.ExpectCommit()
-	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, "request-id")
+	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, ImportReplace, "request-id")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,13 +339,60 @@ func TestImportAppendsVersionAndReturnsOnlyMetadata(t *testing.T) {
 	}
 }
 
+func TestImportMergeReadsCurrentDatasetAndReplacesOnlyMatchingIDs(t *testing.T) {
+	f := newServiceFixture(t)
+	base := validDataset()
+	f.files.readDataset = base
+	patchCases := []testcase.Case{
+		{ID: "2", Input: []byte("replacement"), Output: []byte("70"), Score: 70},
+		{ID: "3", Input: []byte("new"), Output: []byte("30"), Score: 30},
+	}
+	patch := testcase.Dataset{Cases: patchCases, TotalBytes: 25, TotalScore: 100, Digest: testcase.Fingerprint(patchCases)}
+	for _, item := range patchCases {
+		patch.TotalBytes = int64(len(patchCases[0].Input) + len(patchCases[0].Output) + len(patchCases[1].Input) + len(patchCases[1].Output))
+		_ = item
+	}
+	mergedCases := []testcase.Case{base.Cases[0], patchCases[0], patchCases[1]}
+	merged := testcase.Dataset{Cases: mergedCases, Digest: testcase.Fingerprint(mergedCases), TotalScore: 140}
+	for _, item := range mergedCases {
+		merged.TotalBytes += int64(len(item.Input) + len(item.Output))
+	}
+	f.mock.ExpectBegin()
+	f.mock.ExpectQuery("SELECT .* FOR UPDATE").WithArgs(uint64(42)).WillReturnRows(rowsForProblem(t, 4, 2, 2))
+	f.mock.ExpectQuery("SELECT storage_key,digest,case_count,total_bytes,total_score FROM problem_data_versions").WithArgs(uint64(42), uint64(2)).WillReturnRows(sqlmock.NewRows([]string{"storage_key", "digest", "case_count", "total_bytes", "total_score"}).AddRow(strings.Repeat("b", 32), hex.EncodeToString(base.Digest[:]), len(base.Cases), base.TotalBytes, base.TotalScore))
+	f.mock.ExpectExec("INSERT INTO problem_data_versions").WithArgs(uint64(42), uint64(3), strings.Repeat("a", 32), hex.EncodeToString(merged.Digest[:]), len(merged.Cases), merged.TotalBytes, merged.TotalScore, uint64(5), testAdmin.ID, testNow).WillReturnResult(sqlmock.NewResult(0, 1))
+	for _, item := range merged.Cases {
+		f.mock.ExpectExec("INSERT INTO testcases").WithArgs(uint64(42), uint64(3), item.ID, item.Score, int64(len(item.Input)), int64(len(item.Output))).WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	f.mock.ExpectExec("UPDATE problems SET data_version").WithArgs(uint64(3), uint64(5), testNow, uint64(42), uint64(4)).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectProblemAudit(f.mock, "problem.data_merge").WillReturnResult(sqlmock.NewResult(1, 1))
+	f.mock.ExpectCommit()
+	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, patch, ImportMerge, "request-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.files.reads != 1 || len(f.files.dataset.Cases) != 3 || version.TotalScore != 140 || version.Version != 3 {
+		t.Fatalf("merge result: %+v store=%+v", version, f.files.dataset)
+	}
+}
+
+func TestMergeRejectsCaseFoldedCollisionAcrossVersions(t *testing.T) {
+	baseCases := []testcase.Case{{ID: "A", Input: []byte("1"), Output: []byte("1"), Score: 50}}
+	base := testcase.Dataset{Cases: baseCases, TotalBytes: 2, TotalScore: 50, Digest: testcase.Fingerprint(baseCases)}
+	patchCases := []testcase.Case{{ID: "a", Input: []byte("2"), Output: []byte("2"), Score: 50}}
+	patch := testcase.Dataset{Cases: patchCases, TotalBytes: 2, TotalScore: 50, Digest: testcase.Fingerprint(patchCases)}
+	if _, err := mergeDatasets(base, patch); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("case-fold collision merged: %v", err)
+	}
+}
+
 func TestImportCommitUnknownKeepsPublishedData(t *testing.T) {
 	f := newServiceFixture(t)
 	dataset := validDataset()
 	expectImportPrefix(t, f.mock, dataset)
 	expectProblemAudit(f.mock, "problem.data_import").WillReturnResult(sqlmock.NewResult(1, 1))
 	f.mock.ExpectCommit().WillReturnError(errors.New("commit acknowledgement lost"))
-	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, "request-id")
+	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, ImportReplace, "request-id")
 	if !errors.Is(err, ErrUnavailable) || version.Version != 0 || f.files.calls != 1 {
 		t.Fatalf("unknown commit outcome: %+v %v writes=%d", version, err, f.files.calls)
 	}
@@ -339,7 +406,7 @@ func TestImportAuditFailureRollsBackDatabaseButRetainsFiles(t *testing.T) {
 	expectImportPrefix(t, f.mock, dataset)
 	expectProblemAudit(f.mock, "problem.data_import").WillReturnError(errors.New("audit rejected"))
 	f.mock.ExpectRollback()
-	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, "request-id")
+	version, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, ImportReplace, "request-id")
 	if !errors.Is(err, ErrUnavailable) || version.Version != 0 || f.files.calls != 1 {
 		t.Fatalf("partial import: %+v %v", version, err)
 	}
@@ -350,7 +417,7 @@ func TestImportStaleRevisionNeverPublishesFiles(t *testing.T) {
 	f.mock.ExpectBegin()
 	f.mock.ExpectQuery("SELECT .* FOR UPDATE").WithArgs(uint64(42)).WillReturnRows(rowsForProblem(t, 5, 2, 3))
 	f.mock.ExpectRollback()
-	if _, err := f.service.Import(context.Background(), testAdmin, 42, 4, validDataset(), "request-id"); !errors.Is(err, ErrConflict) {
+	if _, err := f.service.Import(context.Background(), testAdmin, 42, 4, validDataset(), ImportReplace, "request-id"); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	if f.files.calls != 0 {
@@ -364,7 +431,7 @@ func TestImportStorageFailureNeverAdvancesPointer(t *testing.T) {
 	f.mock.ExpectBegin()
 	f.mock.ExpectQuery("SELECT .* FOR UPDATE").WithArgs(uint64(42)).WillReturnRows(rowsForProblem(t, 4, 2, 2))
 	f.mock.ExpectRollback()
-	if _, err := f.service.Import(context.Background(), testAdmin, 42, 4, validDataset(), "request-id"); !errors.Is(err, ErrUnavailable) || strings.Contains(err.Error(), "hidden") {
+	if _, err := f.service.Import(context.Background(), testAdmin, 42, 4, validDataset(), ImportReplace, "request-id"); !errors.Is(err, ErrUnavailable) || strings.Contains(err.Error(), "hidden") {
 		t.Fatalf("file failure leaked internals: %v", err)
 	}
 }
@@ -388,7 +455,7 @@ func TestMalformedDatasetsNeverTouchDatabase(t *testing.T) {
 			f := newServiceFixture(t)
 			dataset := validDataset()
 			tc.mutate(&dataset)
-			if _, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, "request-id"); !errors.Is(err, ErrInvalid) {
+			if _, err := f.service.Import(context.Background(), testAdmin, 42, 4, dataset, ImportReplace, "request-id"); !errors.Is(err, ErrInvalid) {
 				t.Fatal(err)
 			}
 			if f.files.calls != 0 {

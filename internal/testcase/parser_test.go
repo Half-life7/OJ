@@ -157,6 +157,58 @@ func TestPairingAndScoreValidation(t *testing.T) {
 	}
 }
 
+func TestParseFilesUsesZIPSafetyRules(t *testing.T) {
+	files := []File{
+		{Name: "b.out", Data: []byte("answer")},
+		{Name: "a.in", Data: []byte("input")},
+		{Name: "b.in", Data: nil},
+		{Name: "a.out", Data: []byte("ok")},
+	}
+	result, err := ParseFiles(context.Background(), files, map[string]int64{"a": 40, "b": 60}, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Cases) != 2 || result.Cases[0].ID != "a" || result.Cases[1].ID != "b" ||
+		string(result.Cases[0].Input) != "input" || string(result.Cases[1].Output) != "answer" ||
+		result.TotalBytes != 13 || result.TotalScore != 100 || result.Digest == ([32]byte{}) {
+		t.Fatalf("unexpected direct dataset: %+v", result)
+	}
+	archived := archive(t, []zipEntry{
+		{name: "a.out", data: []byte("ok")},
+		{name: "a.in", data: []byte("input")},
+		{name: "b.out", data: []byte("answer")},
+		{name: "b.in", data: nil},
+	}, time.Time{})
+	fromZIP, err := parse(t, archived, map[string]int64{"a": 40, "b": 60}, DefaultLimits())
+	if err != nil || fromZIP.Digest != result.Digest {
+		t.Fatalf("direct and ZIP semantics differ: %v", err)
+	}
+}
+
+func TestParseFilesRejectsIncompleteDuplicatesAndOverLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		files  []File
+		scores map[string]int64
+		limit  Limits
+		want   error
+	}{
+		{"empty", nil, nil, DefaultLimits(), ErrPairing},
+		{"missing output", []File{{Name: "a.in"}}, map[string]int64{"a": 1}, DefaultLimits(), ErrPairing},
+		{"duplicate", []File{{Name: "a.in"}, {Name: "a.in"}, {Name: "a.out"}}, map[string]int64{"a": 1}, DefaultLimits(), ErrPairing},
+		{"path", []File{{Name: "../a.in"}, {Name: "../a.out"}}, map[string]int64{"a": 1}, DefaultLimits(), ErrInvalidPath},
+		{"wrong score", []File{{Name: "a.in"}, {Name: "a.out"}}, map[string]int64{"b": 1}, DefaultLimits(), ErrScore},
+		{"file limit", []File{{Name: "a.in", Data: []byte("xx")}, {Name: "a.out"}}, map[string]int64{"a": 1}, func() Limits { l := DefaultLimits(); l.MaxFileBytes = 1; return l }(), ErrLimitExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseFiles(context.Background(), tc.files, tc.scores, tc.limit)
+			if !errors.Is(err, tc.want) || !reflect.DeepEqual(got, Dataset{}) {
+				t.Fatalf("error=%v result=%+v", err, got)
+			}
+		})
+	}
+}
+
 func TestRejectDangerousNamesAndTypes(t *testing.T) {
 	for _, name := range []string{"../a.in", "/a.in", `a\a.in`, `C:\a.in`, `C:a.in`, `\\server\a.in`, "a/../a.in", "a//b.in", "a.in\x00", "a\n.in", "a.in ", ".in", "_a.in", "-a.in", "a.b.in", "a.IN", "a.zip", "a/", "CON.in", "nul.out", "Com1.in", "LPT9.out", "中.in", strings.Repeat("a", 65) + ".in"} {
 		t.Run(name, func(t *testing.T) {

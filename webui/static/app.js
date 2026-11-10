@@ -91,7 +91,8 @@
       if (!response.ok || result.code !== 0) {
         if (response.status === 401 && path !== "/api/users/me") { ++sessionEpoch; renderSession(null); }
         if (response.status === 403) csrfToken = "";
-        throw new APIError(result.message || "操作未完成，请稍后重试。", response.status);
+        const requestID = response.headers?.get?.("X-Request-ID");
+        throw new APIError((result.message || "操作未完成，请稍后重试。") + (requestID ? `（请求 ID：${requestID}）` : ""), response.status);
       }
       return result.data;
     } catch (error) {

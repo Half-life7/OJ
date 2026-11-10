@@ -32,7 +32,8 @@
       try { result = await response.json(); } catch { throw new APIError("服务暂时无法响应，请稍后重试。", response.status); }
       if (!response.ok || result.code !== 0) {
         if (response.status === 403) csrfToken = "";
-        throw new APIError(result.message || "操作未完成，请稍后重试。", response.status);
+        const requestID = response.headers?.get?.("X-Request-ID");
+        throw new APIError((result.message || "操作未完成，请稍后重试。") + (requestID ? `（请求 ID：${requestID}）` : ""), response.status);
       }
       return result.data;
     } catch (error) {
