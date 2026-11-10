@@ -224,8 +224,10 @@
         document.title = problem.title + " · Biue OJ";
         byID("problem-metadata").replaceChildren(badge("#" + problem.id), difficultyBadge(problem.difficulty), badge(number(problem.time_limit_ms) + " ms"), badge(number(problem.memory_limit_mb) + " MiB"));
         byID("problem-tags").replaceChildren(...(problem.tags || []).map((tag) => badge(tag)));
-        for (const [field, suffix] of [["description", "description"], ["input_format", "input-format"], ["output_format", "output-format"], ["sample_input", "sample-input"], ["sample_output", "sample-output"]]) {
-          byID("problem-" + suffix).textContent = problem[field] || "";
+        for (const [field, suffix, htmlField] of [["description", "description", "description_html"], ["input_format", "input-format", "input_html"], ["output_format", "output-format", "output_html"], ["sample_input", "sample-input", ""], ["sample_output", "sample-output", ""]]) {
+          const target = byID("problem-" + suffix);
+          if (htmlField && problem[htmlField]) target.innerHTML = problem[htmlField];
+          else target.textContent = problem[field] || "";
         }
         byID("problem-state").hidden = true;
         byID("problem-detail").hidden = false;
@@ -242,6 +244,26 @@
   const editor = byID("problem-editor-form");
   const upload = byID("problem-upload-form");
   const adminFilters = byID("admin-filter-form");
+  function previewMarkdown(source) {
+    byID("problem-markdown-preview").hidden = false;
+    byID("problem-markdown-preview-html").textContent = "正在生成安全预览…";
+    return write("/api/admin/problems/markdown-preview", "POST", { markdown: source }).then((result) => {
+      byID("problem-markdown-preview-html").innerHTML = result.html;
+      byID("problem-markdown-preview").scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    }).catch((error) => {
+      byID("problem-markdown-preview-html").textContent = error.message;
+    });
+  }
+  function mountTextEditor(id, language, options) {
+    if (!window.BiueEditor || typeof window.BiueEditor.mount !== "function") return null;
+    return window.BiueEditor.mount(byID(id), language, options);
+  }
+  const markdownEditors = {
+    description: mountTextEditor("edit-description", "markdown", { ariaLabel: "题目描述 Markdown", onPreview: previewMarkdown }),
+    input_format: mountTextEditor("edit-input-format", "markdown", { ariaLabel: "输入格式 Markdown", onPreview: previewMarkdown }),
+    output_format: mountTextEditor("edit-output-format", "markdown", { ariaLabel: "输出格式 Markdown", onPreview: previewMarkdown }),
+  };
+  const checkerEditor = mountTextEditor("edit-checker-source", "python3", { ariaLabel: "Python Special Judge 源码" });
   const editorFields = ["title", "description", "input_format", "output_format", "sample_input", "sample_output", "time_limit_ms", "memory_limit_mb", "difficulty", "status", "visibility"];
   let selected = null;
   let dirty = false;
@@ -279,6 +301,7 @@ print("AC" if output.split() == expected.split() else "WA")
     byID("checker-workspace").hidden = mode !== "spj";
     const source = editor.elements.namedItem("checker_source");
     if (source) source.disabled = mode !== "spj";
+    checkerEditor?.setDisabled(mode !== "spj");
     byID("checker-example-input").value = editor.elements.namedItem("sample_input")?.value || "";
     byID("checker-example-output").value = editor.elements.namedItem("sample_output")?.value || "";
     const link = byID("checker-self-test");
@@ -544,6 +567,8 @@ print("AC" if output.split() == expected.split() else "WA")
     for (const field of editorFields) editor.elements.namedItem(field).value = problem ? problem[field] : defaults[field];
     editor.elements.namedItem("tags").value = problem ? (problem.tags || []).join(", ") : "";
       for (const field of ["problem_type","checker_mode","checker_source"]) {const input=editor.elements.namedItem(field);if(input)input.value=problem?.[field]||(field==="problem_type"?"programming":field==="checker_mode"?"tokens":"");}
+    for (const [field, codeEditor] of Object.entries(markdownEditors)) codeEditor?.setValue(editor.elements.namedItem(field).value);
+    checkerEditor?.setValue(editor.elements.namedItem("checker_source").value);
     byID("problem-editor-mode").textContent = problem ? "EDIT PROBLEM #" + problem.id : "NEW PROBLEM";
     byID("problem-editor-heading").textContent = problem ? "编辑题目" : "创建题目";
     byID("problem-editor-version").textContent = problem ? "修订 " + problem.revision + " · 题面版本 " + problem.statement_version + " · 更新于 " + date(problem.updated_at) : "新题默认为隐藏草稿。";
@@ -562,6 +587,7 @@ print("AC" if output.split() == expected.split() else "WA")
     byID("data-import-mode").value = "replace";
     updateCheckerWorkspace();
     savedEditor = editorSnapshot();
+    dirty = false;
     updateControls();
   }
 
@@ -715,15 +741,19 @@ print("AC" if output.split() == expected.split() else "WA")
   });
   byID("checker-template").addEventListener("click", () => {
     editor.elements.namedItem("checker_source").value = checkerTemplate;
+    checkerEditor?.setValue(checkerTemplate);
     editorChanged();
   });
   byID("checker-file").addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 64 * 1024) { message("problem-editor-message", "SPJ 源码最多 64 KiB。"); return; }
-    editor.elements.namedItem("checker_source").value = await file.text();
+    const source = await file.text();
+    editor.elements.namedItem("checker_source").value = source;
+    checkerEditor?.setValue(source);
     editorChanged();
   });
+  byID("problem-markdown-preview-close").addEventListener("click", () => { byID("problem-markdown-preview").hidden = true; });
   byID("problem-save-for-upload").addEventListener("click", () => editor.requestSubmit());
   editor.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -892,6 +922,8 @@ print("AC" if output.split() == expected.split() else "WA")
       byID("problem-state").hidden = true;
       byID("problem-admin").hidden = false;
       await loadList(1);
+      const initialID = Number(new URLSearchParams(window.location.search).get("select"));
+      if (Number.isSafeInteger(initialID) && initialID > 0) await selectProblem(initialID, true);
     } catch (error) {
       state(error.status === 401 ? "请先登录超级管理员账号，再管理题目。" : error.message, false, error.status !== 401, error.status === 401);
     }

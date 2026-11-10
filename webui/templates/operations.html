@@ -1,13 +1,81 @@
 {{define "operations"}}
-<section class="profile-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理与监控</h1><p>用户、队列、审计和既有管理入口。</p></div></section>
+<section class="profile-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理与测试中心</h1><p>按功能进入独立板块；诊断、账号、队列、审计和编辑器演示不再纵向堆叠。</p></div></section>
 <p id="operations-message" role="status" aria-live="polite">正在验证管理权限…</p>
 <div id="operations-content" hidden>
-<section class="profile-card"><h2>管理入口</h2><div class="learning-actions"><a href="/admin/identities" class="button secondary">学号与身份</a><a href="/admin/problems" class="button secondary">题目与数据版本</a><a href="/contests" class="button secondary">比赛、CSV 与封榜</a><a href="/learning?kind=solution" class="button secondary">社区与题解审核</a></div></section>
-<section class="profile-card"><h2>系统与队列</h2><button id="operations-refresh" class="button secondary" type="button">刷新</button><dl id="operations-metrics" class="profile-details"></dl></section>
-<section class="profile-card"><h2>账号管理</h2><form id="operations-search"><label>账号 ID、姓名或学号<input name="q" maxlength="200"></label><button class="button primary">搜索</button></form><div id="operations-users" class="learning-list"></div><button id="operations-users-more" type="button">加载更多账号</button>
-<form id="operations-status"><h3>启用 / 禁用账号</h3><label>账号数字编号<input name="id" type="number" min="1" required></label><label>状态<select name="status"><option value="disabled">禁用</option><option value="active">启用</option></select></label><label>原因<input name="reason" maxlength="255" required></label><button class="button primary">保存状态</button></form>
-<form id="operations-history"><h3>查看账号提交记录</h3><label>账号数字编号<input name="id" type="number" min="1" required></label><button class="button secondary">读取</button></form><div id="operations-history-list"></div></section>
-<section class="profile-card"><h2>审计记录</h2><button id="operations-audits-more" type="button">读取下一批</button><div id="operations-audits" class="learning-list"></div></section>
-<section class="profile-card"><h2>批量重判</h2><p>只处理终态提交，保留原题面/数据版本；已结算比赛不可重判。重复提交相同幂等键不会重复创建轮次。</p><form id="operations-rejudge"><label>请求幂等键<input name="key" minlength="8" maxlength="64" required></label><label>提交编号:当前 generation（逗号分隔，最多 100 个）<input name="items" placeholder="12:1,15:2" required></label><label>原因<input name="reason" maxlength="255" required></label><button class="button primary">发起重判</button></form><div id="operations-rejudge-result"></div></section><section class="profile-card"><h2>死信与消息隔离</h2><button id="operations-queue-refresh" type="button">刷新记录</button><div id="operations-dead"></div><form id="operations-retry"><label>死信编号<input name="id" type="number" min="1" required></label><label>当前 generation<input name="generation" type="number" min="1" required></label><button class="button secondary">人工重试</button></form><div id="operations-quarantine"></div></section>
+  <div class="contest-workspace operations-workspace">
+    <aside class="contest-sidebar" aria-label="管理功能">
+      <button class="contest-nav-item active" type="button" data-operations-panel="overview">管理概览</button>
+      <button class="contest-nav-item" type="button" data-operations-panel="test">测试中心</button>
+      <button class="contest-nav-item" type="button" data-operations-panel="accounts">账号管理</button>
+      <button class="contest-nav-item" type="button" data-operations-panel="queues">队列与死信</button>
+      <button class="contest-nav-item" type="button" data-operations-panel="audit">审计与重判</button>
+    </aside>
+    <div class="contest-content">
+      <section class="profile-card operations-panel" data-operations-panel-content="overview">
+        <span class="card-number">OVERVIEW</span><h2>管理入口与系统状态</h2>
+        <div class="learning-actions"><a href="/admin/identities" class="button secondary">学号与身份</a><a href="/admin/problems" class="button secondary">题目、题包与数据版本</a><a href="/contests" class="button secondary">比赛、CSV 与封榜</a><a href="/learning?kind=solution" class="button secondary">社区与题解审核</a></div>
+        <div class="problem-panel-heading"><h3>服务与队列</h3><button id="operations-refresh" class="button secondary" type="button">刷新指标</button></div>
+        <dl id="operations-metrics" class="profile-details"></dl>
+      </section>
+
+      <section class="profile-card operations-panel" data-operations-panel-content="test" hidden>
+        <span class="card-number">TEST CENTER</span><h2>一键测试与演示</h2>
+        <p>所有结果来自当前管理 API、编辑器实例或题包解析器；失败会如实显示，不生成模拟通过。</p>
+        <nav class="operations-test-tabs" role="tablist" aria-label="测试功能"><button class="active" type="button" role="tab" aria-selected="true" data-operations-test-panel="diagnostics">系统检查</button><button type="button" role="tab" aria-selected="false" tabindex="-1" data-operations-test-panel="editors">编辑器</button><button type="button" role="tab" aria-selected="false" tabindex="-1" data-operations-test-panel="csv">CSV 样例</button><button type="button" role="tab" aria-selected="false" tabindex="-1" data-operations-test-panel="package">题包导入</button></nav>
+        <div role="tabpanel" data-operations-test-content="diagnostics">
+        <div class="page-actions"><button id="operations-test-run" class="button primary" type="button">一键检查系统</button><button id="operations-test-clear" class="button secondary" type="button">清空结果</button></div>
+        <div id="operations-test-results" class="operations-test-results"></div>
+        </div>
+
+        <div role="tabpanel" data-operations-test-content="editors" hidden>
+        <section class="operations-demo"><div class="problem-panel-heading"><div><span class="card-number">CODE EDITOR</span><h3>代码编辑演示</h3><p class="field-help">语法高亮、Tab/Shift+Tab、Ctrl/Cmd+/ 切换当前语言注释。</p></div><select id="operations-demo-language" aria-label="代码语言"><option value="cpp17">C++17</option><option value="go">Go</option><option value="java">Java</option><option value="javascript">JavaScript</option><option value="python3">Python 3</option></select></div><textarea id="operations-demo-code" rows="12" spellcheck="false">#include <iostream>
+int main() {
+    int a, b;
+    std::cin >> a >> b;
+    std::cout << a + b << '\n';
+}</textarea></section>
+
+        <section class="operations-demo"><div class="problem-panel-heading"><div><span class="card-number">MARKDOWN EDITOR</span><h3>Markdown 编辑演示</h3><p class="field-help">工具栏、标题、列表、链接、代码和快捷键；预览使用服务端安全净化。</p></div></div><textarea id="operations-demo-markdown" rows="10" spellcheck="false"># 示例题面
+
+这是一段 **Markdown**。
+
+- 支持列表
+- 支持快捷键
+
+```cpp
+std::cout << "Hello";
+```</textarea><section id="operations-markdown-preview" class="markdown-preview" hidden><div class="problem-panel-heading"><h3>安全预览</h3><button id="operations-markdown-preview-close" class="button secondary" type="button">关闭</button></div><div id="operations-markdown-preview-html"></div></section></section>
+        </div>
+
+        <div role="tabpanel" data-operations-test-content="csv" hidden>
+        <section class="operations-demo operations-demo-first"><div class="problem-panel-heading"><div><span class="card-number">CSV SAMPLE</span><h3>表头识别与样例生成</h3><p class="field-help">支持中英文别名；仅生成测试样例，不写入正式比赛。</p></div><input id="operations-csv-file" type="file" accept=".csv,text/csv"></div><textarea id="operations-csv-input" rows="6">账号,姓名,队伍,类型
+alice,Alice,Blue,official</textarea><div class="page-actions"><button id="operations-csv-analyze" class="button secondary" type="button">识别并生成</button><button id="operations-csv-copy" class="button secondary" type="button">复制样例</button><button id="operations-csv-download" class="button secondary" type="button">下载样例</button></div><pre id="operations-csv-result" class="sample-code"></pre></section>
+        </div>
+
+        <div role="tabpanel" data-operations-test-content="package" hidden>
+        <section class="operations-demo operations-demo-first"><div class="problem-panel-heading"><div><span class="card-number">PACKAGE IMPORT</span><h3>外部题包</h3><p class="field-help">支持内置 UOJ 风格样例或同结构 ZIP。先预览，再显式创建。</p></div><input id="operations-package-file" type="file" accept=".zip,application/zip"></div><div class="page-actions"><button id="operations-package-builtin" class="button secondary" type="button">预览内置 A+B 样例</button><button id="operations-package-preview" class="button secondary" type="button">预览所选 ZIP</button><button id="operations-package-import" class="button primary" type="button" disabled>确认导入题目</button></div><div id="operations-package-result"></div></section>
+        </div>
+      </section>
+
+      <section class="profile-card operations-panel" data-operations-panel-content="accounts" hidden>
+        <span class="card-number">ACCOUNTS</span><h2>账号管理</h2>
+        <form id="operations-search"><label>账号 ID、姓名或学号<input name="q" maxlength="200"></label><button class="button primary">搜索</button></form>
+        <div id="operations-users" class="learning-list"></div><button id="operations-users-more" type="button" class="button secondary">加载更多账号</button>
+        <form id="operations-status"><h3>启用 / 禁用账号</h3><label>账号数字编号<input name="id" type="number" min="1" required></label><label>状态<select name="status"><option value="disabled">禁用</option><option value="active">启用</option></select></label><label>原因<input name="reason" maxlength="255" required></label><button class="button primary">保存状态</button></form>
+        <form id="operations-history"><h3>查看账号提交记录</h3><label>账号数字编号<input name="id" type="number" min="1" required></label><button class="button secondary">读取</button></form><div id="operations-history-list"></div>
+      </section>
+
+      <section class="profile-card operations-panel" data-operations-panel-content="queues" hidden>
+        <span class="card-number">QUEUES</span><h2>队列、死信与消息隔离</h2><button id="operations-queue-refresh" class="button secondary" type="button">刷新记录</button><div id="operations-dead"></div>
+        <form id="operations-retry"><label>死信编号<input name="id" type="number" min="1" required></label><label>当前 generation<input name="generation" type="number" min="1" required></label><button class="button secondary">人工重试</button></form><div id="operations-quarantine"></div>
+      </section>
+
+      <section class="profile-card operations-panel" data-operations-panel-content="audit" hidden>
+        <span class="card-number">AUDIT & REJUDGE</span><h2>审计与批量重判</h2><button id="operations-audits-more" type="button" class="button secondary">读取下一批审计</button><div id="operations-audits" class="learning-list"></div>
+        <p>只处理终态提交，保留原题面/数据版本；已结算比赛不可重判。重复提交相同幂等键不会重复创建轮次。</p>
+        <form id="operations-rejudge"><label>请求幂等键<input name="key" minlength="8" maxlength="64" required></label><label>提交编号:当前 generation（逗号分隔，最多 100 个）<input name="items" placeholder="12:1,15:2" required></label><label>原因<input name="reason" maxlength="255" required></label><button class="button primary">发起重判</button></form><div id="operations-rejudge-result"></div>
+      </section>
+    </div>
+  </div>
 </div>
 {{end}}

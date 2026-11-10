@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -57,6 +58,14 @@ func (f *httpOperations) Create(_ context.Context, a Actor, in Input, id string)
 }
 func (f *httpOperations) Update(_ context.Context, a Actor, _ uint64, in Input, id string) (Problem, error) {
 	return f.Create(context.Background(), a, in, id)
+}
+func (f *httpOperations) ImportPackage(_ context.Context, a Actor, pkg ProblemPackage, id string) (Problem, error) {
+	f.calls++
+	f.actor = a
+	f.dataset = pkg.Dataset
+	f.input = pkg.Input
+	f.requestID = id
+	return Problem{ID: 99, Input: pkg.Input, StatementVersion: 1, DataVersion: 1}, f.err
 }
 func (f *httpOperations) Import(_ context.Context, a Actor, _ uint64, rev uint64, d testcase.Dataset, mode, id string) (DataVersion, error) {
 	f.calls++
@@ -387,6 +396,26 @@ func TestHTTPDirectFileRejectsPathBearingDispositionNames(t *testing.T) {
 	r.ServeHTTP(w, unsafeFileNameRequest(t, "../1.in"))
 	if w.Code != 400 || ops.calls != 0 || !strings.Contains(w.Body.String(), "文件名不合法") {
 		t.Fatalf("status=%d calls=%d body=%s", w.Code, ops.calls, w.Body)
+	}
+}
+
+func TestHTTPBuiltInPackagePreview(t *testing.T) {
+	ops := &httpOperations{}
+	h, r := httpHandler(t, ops, adminAuth())
+	h.SetSampleDirectory(filepath.Join("..", "..", "导入样例"))
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("sample", "1")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "http://oj.test/api/admin/problems/package-preview", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: "session"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 || ops.calls != 0 || !strings.Contains(w.Body.String(), `"title":"A+B 输入输出练习I"`) || !strings.Contains(w.Body.String(), `"total_score":100`) {
+		t.Fatalf("status=%d body=%s calls=%d", w.Code, w.Body, ops.calls)
 	}
 }
 

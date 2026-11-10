@@ -119,6 +119,20 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		v, e := h.s.Get(c.Request.Context(), actor(c), id)
 		response(c, v, e)
 	})
+	g.POST("/api/community/preview", func(c *gin.Context) {
+		var in struct {
+			Markdown string `json:"markdown"`
+		}
+		if !binding(c, &in) {
+			return
+		}
+		v, e := Render(in.Markdown)
+		if e != nil {
+			response(c, nil, e)
+			return
+		}
+		response(c, gin.H{"html": v}, nil)
+	})
 	g.POST("/api/community", func(c *gin.Context) {
 		var in Input
 		if !binding(c, &in) {

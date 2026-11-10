@@ -11,7 +11,7 @@
 - 题目必须为已发布的公开题目。Submit 还要求存在已导入的测试数据；创建时锁定题面和数据版本，后续编辑或重传不改变已有任务。
 - source_code 为非空有效 UTF-8，最多 64 KiB；Run 输入最多 64 KiB；JSON 请求体上限 256 KiB。语言 ID 为 cpp17/go/python3/java，由固定语言注册表提供。
 - GET /api/submissions 列出本人记录，支持分页、problem_id 和 kind=Run/Submit；GET /api/submissions/:id 允许本人、所属比赛的授权管理员或超级管理员读取，其他用户获得 404。列表不返回源码，正式测试的输入、答案和程序输出不对外公开。比赛成员提交查询见 [比赛说明](CONTESTS.md)。
-- GET /api/languages 提供语言 ID 和显示名。页面提供本地 CodeMirror 6 编辑器、Run/Submit、个人提交记录与状态轮询；保持无前端运行时构建步骤。
+- GET /api/languages 提供语言 ID 和显示名。页面提供本地 CodeMirror 6 编辑器、Run/Submit、个人提交记录与状态轮询；保持无前端运行时构建步骤。编辑器支持五语言语法高亮、四空格 Tab/Shift+Tab、Ctrl/Cmd+/ 语言注释、撤销、搜索与括号补全，缺少 nonce 或初始化失败时回退 textarea。
 
 ## 可靠性与限流
 

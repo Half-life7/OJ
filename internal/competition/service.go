@@ -90,6 +90,7 @@ type Contest struct {
 	End      time.Time  `db:"ends_at" json:"ends_at"`
 	Revision uint64     `db:"revision" json:"revision"`
 	Settled  *time.Time `db:"settled_at" json:"settled_at"`
+	Reason   string     `db:"-" json:"change_reason,omitempty"`
 }
 
 const columns = `id,title,scoring_mode,enrollment_policy,approval_required,team_mode,starts_at,ends_at,revision,settled_at`
@@ -128,6 +129,10 @@ func (e *FieldError) Error() string { return "请检查标记的比赛字段" }
 func (e *FieldError) Unwrap() error { return ErrInvalid }
 
 func validateContest(c Contest, now time.Time) error {
+	return validateContestFields(c, now, false)
+}
+
+func validateContestFields(c Contest, now time.Time, allowPastStart bool) error {
 	fields := map[string]string{}
 	if !clean(c.Title, 200) {
 		fields["title"] = "比赛名称需为 1～200 个字符，且不能含控制字符"
@@ -138,7 +143,7 @@ func validateContest(c Contest, now time.Time) error {
 	if c.Policy != "open" && c.Policy != "admin_add" {
 		fields["enrollment_policy"] = "请选择有效的报名方式"
 	}
-	if c.Start.IsZero() || !c.Start.After(now) || c.Start.Year() > 9999 {
+	if c.Start.IsZero() || (!allowPastStart && !c.Start.After(now)) || c.Start.Year() > 9999 {
 		fields["starts_at"] = "开始时间必须晚于服务器当前时间，请至少预留几分钟"
 	}
 	if c.End.IsZero() || !c.End.After(c.Start) || c.End.Year() > 9999 {
@@ -151,15 +156,39 @@ func validateContest(c Contest, now time.Time) error {
 	}
 	return nil
 }
+
+func validateContestEdit(c Contest, now time.Time, old Contest) error {
+	if err := validateContestFields(c, now, true); err != nil {
+		return err
+	}
+	fields := map[string]string{}
+	started := !now.Before(old.Start)
+	if started && c.Mode != old.Mode {
+		fields["scoring_mode"] = "比赛开始后不能修改计分模式；紧急结构变更需另行走受审计流程"
+	}
+	if started && c.TeamMode != old.TeamMode {
+		fields["team_mode"] = "比赛开始后不能切换个人赛/团队赛"
+	}
+	if started && (strings.TrimSpace(c.Reason) == "" || utf8.RuneCountInString(c.Reason) > 255 || strings.ContainsFunc(c.Reason, unicode.IsControl)) {
+		fields["change_reason"] = "比赛开始后编辑必须填写 1～255 个字符的变更原因"
+	}
+	if !now.Before(old.End) && !c.End.Equal(old.End) && !c.End.After(now) {
+		fields["ends_at"] = "延长已结束比赛时，新的结束时间必须晚于服务器当前时间"
+	}
+	if len(fields) > 0 {
+		return &FieldError{Fields: fields}
+	}
+	return nil
+}
 func (s *Service) Save(ctx context.Context, a auth.User, c Contest) (uint64, error) {
 	var id uint64
 	err := s.write(ctx, a, func(tx *sqlx.Tx, a auth.User) error {
 		now := s.now().UTC()
 		c.Title = strings.TrimSpace(c.Title)
-		if err := validateContest(c, now); err != nil {
-			return err
-		}
 		if c.ID == 0 {
+			if err := validateContest(c, now); err != nil {
+				return err
+			}
 			if a.GlobalRole != "super_admin" || a.AccountType != "permanent" {
 				return ErrForbidden
 			}
@@ -180,8 +209,11 @@ func (s *Service) Save(ctx context.Context, a auth.User, c Contest) (uint64, err
 			if e = allowed(ctx, tx, a, c.ID); e != nil {
 				return e
 			}
-			if !now.Before(old.Start) || old.Revision != c.Revision || old.Settled != nil || old.TeamMode != c.TeamMode {
+			if old.Revision != c.Revision || old.Settled != nil {
 				return ErrConflict
+			}
+			if err := validateContestEdit(c, now, old); err != nil {
+				return err
 			}
 			_, e = tx.ExecContext(ctx, `UPDATE contests SET title=?,scoring_mode=?,enrollment_policy=?,approval_required=?,starts_at=?,ends_at=?,revision=revision+1 WHERE id=?`, c.Title, c.Mode, c.Policy, c.Approval, c.Start.UTC(), c.End.UTC(), c.ID)
 			if e != nil {

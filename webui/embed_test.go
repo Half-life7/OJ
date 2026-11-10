@@ -18,7 +18,7 @@ func TestVersionedAssetsServeEmbeddedContent(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest("GET", "/contests", nil))
 	urls := regexp.MustCompile(`/static/[a-z.]+\?v=[a-f0-9]{64}`).FindAllString(w.Body.String(), -1)
-	if len(urls) != 3 {
+	if len(urls) != 4 {
 		t.Fatalf("missing versioned CSS/app/contest assets: %v", urls)
 	}
 	for _, asset := range urls {

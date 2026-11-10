@@ -37,6 +37,7 @@ type Config struct {
 	SessionTTL               time.Duration
 	BcryptCost               int
 	ProblemDataDir           string
+	ProblemSampleDir         string
 	ProblemImportConcurrency int
 	JudgeQueueCapacity       int
 }
@@ -151,6 +152,10 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	cfg.ProblemDataDir = value("PROBLEM_DATA_DIR", "oj-data/problem-data")
 	if strings.ContainsAny(cfg.ProblemDataDir, "\x00\r\n") {
 		return Config{}, invalid("PROBLEM_DATA_DIR", "contains invalid characters")
+	}
+	cfg.ProblemSampleDir = value("PROBLEM_SAMPLE_DIR", "导入样例")
+	if strings.ContainsAny(cfg.ProblemSampleDir, "\x00\r\n") {
+		return Config{}, invalid("PROBLEM_SAMPLE_DIR", "contains invalid characters")
 	}
 	if cfg.ProblemImportConcurrency, err = integer("PROBLEM_IMPORT_CONCURRENCY", value("PROBLEM_IMPORT_CONCURRENCY", "2"), 1, 8); err != nil {
 		return Config{}, err

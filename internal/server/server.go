@@ -163,7 +163,7 @@ func observe(logger *slog.Logger) gin.HandlerFunc {
 }
 
 func isProblemUploadPath(path string) bool {
-	return strings.HasPrefix(path, "/api/admin/problems/") && strings.HasSuffix(path, "/data-versions")
+	return strings.HasPrefix(path, "/api/admin/problems/") && (strings.HasSuffix(path, "/data-versions") || strings.HasSuffix(path, "/package-preview") || strings.HasSuffix(path, "/package-import"))
 }
 
 func csrfProtection(cfg config.Config) gin.HandlerFunc {

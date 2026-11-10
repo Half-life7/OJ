@@ -162,7 +162,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 
 认证接口、请求与响应见 [API 文档](docs/API.md)；建表约束与迁移说明见 [数据库文档](docs/DATABASE.md)。
 
-测试数据解析器的格式、限制和调用方法见 [测试数据说明](docs/TEST_DATA.md)，题目 API、权限、修订号与 ZIP 上传见 [题目管理说明](docs/PROBLEMS.md)。解析器仍只返回内存数据；2B 服务将其发布为不可变版本并事务登记。PROBLEM_DATA_DIR 默认 oj-data/problem-data，Compose 固定挂载 /app/oj-data/problem-data；导入并发默认 2，可由 PROBLEM_IMPORT_CONCURRENCY 调整为 1～8。数据库与数据目录均需备份；已发布孤儿目录不会被自动删除，禁止仅凭提交错误自行删除。比赛版本快照留待比赛模块接入。
+测试数据解析器的格式、限制和调用方法见 [测试数据说明](docs/TEST_DATA.md)，题目 API、Markdown、外部题包、权限、修订号与上传见 [题目管理说明](docs/PROBLEMS.md)。解析器仍只返回内存数据；服务将其发布为不可变版本并事务登记。PROBLEM_DATA_DIR 默认 oj-data/problem-data，Compose 固定挂载 /app/oj-data/problem-data；PROBLEM_SAMPLE_DIR 默认 `导入样例`，镜像复制到 `/app/导入样例`。导入并发默认 2，可由 PROBLEM_IMPORT_CONCURRENCY 调整为 1～8。数据库与数据目录均需备份；已发布孤儿目录不会被自动删除，禁止仅凭提交错误自行删除。
 
 | 路径 | 含义 |
 | --- | --- |
@@ -170,7 +170,8 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm -e O
 | `/ready` | 检查 MySQL、Redis、迁移版本及 dirty 状态，失败返回 503 |
 | `/register`、`/login`、`/me` | 注册、登录与个人中心 |
 | `/problems`、`/problems/{id}` | 公开题库与题面 |
-| `/admin/problems` | 超级管理员题目管理、ZIP/成对文件上传、分值表与 SPJ 快捷编辑 |
+| `/admin` | 分层管理后台、系统诊断、编辑器演示、CSV/题包测试 |
+| `/admin/problems` | 超级管理员 Markdown/SPJ 编辑、ZIP/成对文件上传、题包入口与分值表 |
 | `/submissions`、`/submissions/{id}` | 本人提交记录与详情；接口和限制见 [提交说明](docs/SUBMISSIONS.md) |
 
 依赖故障时健康接口仍可查询，相关业务返回 503；Worker、dispatcher 与 Runner 具有各自的进程/依赖健康检查，Web `/ready` 只报告自身数据库/Redis/迁移就绪，不代表整个判题集群就绪。
@@ -188,12 +189,13 @@ node --check webui/static/contests.js
 node --check webui/static/community.js
 node --check webui/static/submissions.js
 node --check webui/static/editor.js
+node --check webui/static/operations.js
 node --test webui/tests/problems.test.cjs webui/tests/submissions.test.cjs webui/tests/contests.test.cjs webui/tests/community.test.cjs
 ```
 
 联网环境先执行 `go mod download`，再运行上述全量检查；`go mod verify` 可核对本地模块缓存。`-race` 在 Windows 需要可用的 C 编译器。页面本身不依赖 Node，Node 命令用于脚本语法和页面行为验证。HTTP、sqlmock、miniredis 测试验证认证行为、事务边界与限流，不能代替真实 MySQL 唯一约束、迁移和 Redis 故障恢复验收。
 
-真实页面回归需要独立的 `.cache/2d-acceptance.env`、运行中的验收 Compose 项目和 Playwright；使用当前源码重建 Web/Nginx 后运行 `node tools/check_optimizations_browser.cjs`。该脚本覆盖公开题目、直接文件 replace/merge、分值预览、SPJ 模板、比赛工作区和社区权限状态，不连接用户生产环境。
+真实页面回归需要独立的 `.cache/2d-acceptance.env`、运行中的验收 Compose 项目和 Playwright；使用当前源码重建 Web/Nginx 后运行 `node tools/check_optimizations_browser.cjs` 与 `node tools/check_admin_experience_browser.cjs`。前者覆盖公开题目、直接文件 replace/merge、分值预览、SPJ 和比赛/社区；后者覆盖管理分层、测试中心四个子页签、一键诊断、Tab/Ctrl 快捷键、Markdown 安全预览、中文 CSV 表头、内置题包导入与比赛开始后不跳页编辑，不连接用户生产环境。
 
 首次开发遇到的 Go 依赖下载问题已通过正常授权的 HTTPS GET 路径解决，模块包与官方校验记录已锁定。首批全量单元测试、静态检查、构建及竞态检查已通过，也已验证真实 Web 进程在数据库和 Redis 不可用时仍可提供页面、CSRF 与健康检查。具体结果以 [CHANGELOG.md](CHANGELOG.md) 为准。
 

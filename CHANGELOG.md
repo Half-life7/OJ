@@ -9,6 +9,20 @@
 - 记录对应提交或交付标识；同一次提交的完整哈希可在后续记录补充，不编造尚未产生的哈希。
 - 功能交付后，优化条目只能由 agent 标记“待用户验收”。用户作最终评判，条目删除和用户认可由用户决定；用户不通过的反馈应保留并关联返工记录。
 
+## 2026-11-11 — OPT-018～OPT-025 管理体验、编辑器与题包导入（待用户验收）
+
+- 交付标识 `opts-18-25`。`/admin` 从单页纵向堆叠改为五个分层板块：概览、测试中心、账号、队列与死信、审计与重判；只在当前板块加载数据，URL hash 保留位置，桌面使用左侧高亮导航、手机横向滚动。测试中心再分为“系统检查、编辑器、CSV 样例、题包导入”四个支持键盘切换的子页签，新增真实一键系统检查、代码/Markdown 编辑器演示、CSV 表头与样例生成、内置/上传题包预览与显式导入。
+- 新增本地 CodeMirror 6 Markdown 语言和快捷层。代码编辑区统一支持语法高亮、四空格 `Tab`/`Shift+Tab`、`Ctrl/Cmd+/` 当前语言注释、撤销/搜索/括号补全；Markdown 区增加粗体、斜体、链接、行内代码、代码块、标题、列表、引用工具栏及快捷键，预览先经服务端 Goldmark + Bluemonday 净化。无 nonce 或初始化失败时继续回退 textarea。
+- 题目描述与输入/输出格式改为 Markdown 原文存储，公开 API 返回净化后的 `description_html/input_html/output_html`；社区 Markdown 编辑器复用同一安全渲染。管理测试中心、题目编辑器、SPJ、比赛提交和社区正文均接入统一编辑器。
+- 比赛工作区新增“应急编辑比赛”，保存后停留 `/contests/:id`。比赛开始后仍可修正名称、报名方式、审核开关和时间，必须填写变更原因并记录审计；计分模式与团队模式开始后锁定，已结算比赛锁定设置，revision/时间顺序/30 天边界继续由后端校验。
+- CSV 导入支持中英文表头别名、BOM/大小写/空白归一化，返回规范化列映射，并在导入面板逐字段提供中文说明。测试中心使用相同别名生成可复制/下载的当前页面样例，不写正式比赛。
+- 新增 UOJ 风格题包导入：`problem.yaml`、Markdown、`testdata/config.yaml` 和成对测试文件。支持内置 `导入样例/` 与同结构 ZIP，预览后原子创建题面/数据/标签/审计。外部 `pid/owner/nSubmit/nAccept` 不导入；测试点继续经过路径、文件配对、ZIP32、CRC、大小、分值和摘要校验。
+- 社区浏览筛选器改为紧凑横向工具栏，列表行高缩短，移动端筛选项折为两列；详情、权限、草稿和请求代次保护保持。用户原对 OPT-008/009/010/016 的评判原文保留，并分别关联到新的 OPT-019/020/021/025。
+- API/配置影响：新增 `POST /api/admin/problems/markdown-preview`、`package-preview`、`package-import`、`POST /api/community/preview`；新增只读配置 `PROBLEM_SAMPLE_DIR`（默认 `导入样例`）。应用镜像复制该样例目录。数据库无迁移，继续使用版本 9；权限仍为永久超级管理员或对应社区会话校验，未放宽 Origin/CSRF。
+- 自动验证：解析器覆盖内置样例、同结构 ZIP、路径/重复/大小/分值；服务测试覆盖 Markdown XSS 净化、题包原子创建和比赛开始后应急编辑。全量 Go test/vet/build/race、22 项 Node 行为测试、维护/部署/镜像/Compose 检查通过。
+- Edge 实际验收：`check_optimizations_browser.cjs` 继续覆盖原有 replace/merge 与比赛/社区流程；新增 `check_admin_experience_browser.cjs` 覆盖管理分层、测试中心四个子页签、一键诊断、Ctrl+/ 与 Tab、Markdown 快捷工具栏和净化预览、中文 CSV 表头、内置题包真实导入、比赛开始后不跳页应急编辑及移动端社区压缩；`check_operations_browser.cjs` 覆盖分层账号操作、CSV 文件预览/确认、导出和批量打星。截图：`.cache/admin-test-center-desktop.png`、`.cache/admin-test-center-mobile.png`、`.cache/admin-live-contest-edit.png`、`.cache/admin-experience-mobile.png`。
+- 用户生产服务器尚未升级或实测，所有 OPT-018～OPT-025 只标记“待用户验收”。服务端部署需在源码目录运行 `sudo bash deploy.sh update`；离线和 arm64 镜像需重新构建/导入。
+
 ## 2026-11-11 — OPT-002、OPT-003、OPT-006～OPT-017 可用性收尾（待用户验收）
 
 - 交付标识 `opts-2-3-6-17`。公开可见的草稿由服务端规范为已发布，解决“编辑器显示公开但公共题库不可见”；页面在切换公开可见时同步显示该语义，仍由服务端最终确认。已处理用户反馈的比赛页层级：列表只展示比赛，进入 `/contests/:id` 后使用高亮左侧功能区与中栏内容，顶部比赛导航移到最左，并提供“我的身份”和管理员身份入口。

@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"biue/internal/judge"
+	"biue/internal/markdownsafe"
 	"biue/internal/testcase"
 
 	"github.com/go-sql-driver/mysql"
@@ -260,6 +261,15 @@ func (s *Service) Get(ctx context.Context, actor Actor, id uint64) (Problem, err
 	if !admin(actor) {
 		result.CheckerSource = ""
 	}
+	if e == nil {
+		if result.DescriptionHTML, e = markdownsafe.Render(result.Description, 64<<10); e != nil {
+			e = ErrUnavailable
+		} else if result.InputHTML, e = markdownsafe.Render(result.InputFormat, 16<<10); e != nil {
+			e = ErrUnavailable
+		} else if result.OutputHTML, e = markdownsafe.Render(result.OutputFormat, 16<<10); e != nil {
+			e = ErrUnavailable
+		}
+	}
 	if e == nil && result.ProblemType == "output_only" && result.DataVersion > 0 {
 		if e = s.db.SelectContext(ctx, &result.OutputCases, `SELECT case_id FROM testcases WHERE problem_id=? AND data_version=? ORDER BY case_id`, id, result.DataVersion); e != nil {
 			return Problem{}, s.unavailable("output_case_manifest", e)
@@ -315,6 +325,82 @@ func (s *Service) Create(ctx context.Context, actor Actor, input Input, requestI
 	}
 	input.Revision = 1
 	return Problem{Input: input, ID: id, StatementVersion: 1, CreatorID: actor.ID, CreatedAt: now, UpdatedAt: now}, nil
+}
+
+func (s *Service) ImportPackage(ctx context.Context, actor Actor, pkg ProblemPackage, requestID string) (Problem, error) {
+	if !admin(actor) {
+		return Problem{}, ErrForbidden
+	}
+	input, err := normalizeInput(pkg.Input)
+	if err != nil {
+		return Problem{}, err
+	}
+	if err = validateDataset(pkg.Dataset); err != nil {
+		return Problem{}, err
+	}
+	snapshot, err := json.Marshal(input)
+	if err != nil || len(snapshot) > 256<<10 {
+		return Problem{}, ErrInvalid
+	}
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return Problem{}, s.unavailable("package_begin", err)
+	}
+	defer tx.Rollback()
+	now := s.now().UTC().Truncate(time.Microsecond)
+	res, err := tx.ExecContext(ctx, `INSERT INTO problems (title,difficulty,status,visibility,snapshot_json,revision,statement_version,data_version,creator_id,created_at,updated_at) VALUES (?,?,?,?,?,1,NULL,NULL,?,?,?)`, input.Title, input.Difficulty, input.Status, input.Visibility, snapshot, actor.ID, now, now)
+	if err != nil {
+		return Problem{}, s.unavailable("package_create", err)
+	}
+	insertID, err := res.LastInsertId()
+	if err != nil || insertID <= 0 {
+		return Problem{}, s.unavailable("package_id", err)
+	}
+	id := uint64(insertID)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO problem_versions (problem_id,version,snapshot_json,created_by,created_at) VALUES (?,1,?,?,?)`, id, snapshot, actor.ID, now); err != nil {
+		return Problem{}, s.unavailable("package_version", err)
+	}
+	if err = replaceTags(ctx, tx, id, input.Tags); err != nil {
+		return Problem{}, s.unavailable("package_tags", err)
+	}
+	key, err := s.data.Write(ctx, pkg.Dataset)
+	if err != nil {
+		return Problem{}, s.unavailable("package_files", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.logger.Warn("published imported problem data retained for reconciliation", "problem_id", id, "storage_key", key)
+		}
+	}()
+	if !storageKeyPattern.MatchString(key) {
+		return Problem{}, s.unavailable("package_storage_key", ErrInvalid)
+	}
+	digest := hex.EncodeToString(pkg.Dataset.Digest[:])
+	if _, err = tx.ExecContext(ctx, `INSERT INTO problem_data_versions(problem_id,data_version,storage_key,digest,case_count,total_bytes,total_score,revision,created_by,created_at) VALUES (?,1,?,?,?,?,?,2,?,?)`, id, key, digest, len(pkg.Dataset.Cases), pkg.Dataset.TotalBytes, pkg.Dataset.TotalScore, actor.ID, now); err != nil {
+		return Problem{}, s.unavailable("package_data_version", err)
+	}
+	for _, item := range pkg.Dataset.Cases {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO testcases(problem_id,data_version,case_id,score,input_bytes,output_bytes) VALUES (?,1,?,?,?,?)`, id, item.ID, item.Score, len(item.Input), len(item.Output)); err != nil {
+			return Problem{}, s.unavailable("package_case", err)
+		}
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE problems SET statement_version=1,data_version=1,revision=2,updated_at=? WHERE id=? AND revision=1`, now, id)
+	if err != nil {
+		return Problem{}, s.unavailable("package_pointer", err)
+	}
+	if affected, rowsErr := res.RowsAffected(); rowsErr != nil || affected != 1 {
+		return Problem{}, s.unavailable("package_pointer_rows", rowsErr)
+	}
+	if err = audit(ctx, tx, actor, "problem.package_import", id, requestID, now); err != nil {
+		return Problem{}, s.unavailable("package_audit", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return Problem{}, s.unavailable("package_commit", err)
+	}
+	committed = true
+	input.Revision = 2
+	return Problem{Input: input, ID: id, StatementVersion: 1, DataVersion: 1, CreatorID: actor.ID, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (s *Service) Update(ctx context.Context, actor Actor, id uint64, input Input, requestID string) (Problem, error) {

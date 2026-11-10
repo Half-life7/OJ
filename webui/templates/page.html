@@ -8,11 +8,11 @@
   <title>{{.Title}} · Biue OJ</title>
   <link rel="stylesheet" href="{{asset "/static/app.css"}}">
   <script src="{{asset "/static/app.js"}}" defer></script>
+  {{if or (eq .Name "problem") (eq .Name "admin-problems") (eq .Name "contests") (eq .Name "operations") (eq .Name "community")}}<script src="{{asset "/static/editor.js"}}" defer></script>{{end}}
   {{if eq .Name "operations"}}<script src="{{asset "/static/operations.js"}}" defer></script>{{end}}
   {{if or (eq .Name "community") (eq .Name "rankings") (eq .Name "problem") (eq .Name "problems")}}<script src="{{asset "/static/community.js"}}" defer></script>{{end}}
   {{if or (eq .Name "contests") (eq .Name "identities")}}<script src="{{asset "/static/contests.js"}}" defer></script>{{end}}
   {{if or (eq .Name "problems") (eq .Name "problem") (eq .Name "admin-problems")}}<script src="{{asset "/static/problems.js"}}" defer></script>{{end}}
-  {{if eq .Name "problem"}}<script src="{{asset "/static/editor.js"}}" defer></script>{{end}}
   {{if or (eq .Name "problem") (eq .Name "submissions") (eq .Name "submission")}}<script src="{{asset "/static/submissions.js"}}" defer></script>{{end}}
 </head>
 <body data-page="{{.Name}}">

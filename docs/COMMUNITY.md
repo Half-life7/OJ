@@ -14,7 +14,9 @@
 
 ## 页面和接口
 
-`/learning` 为题单、讨论和题解的统一入口，按类型/题目/比赛筛选，可切换我的内容、收藏和待审队列。游客看到登录引导，比赛临时账号看到只读范围说明；发布表单只在永久账号主动新建或编辑时显示。详情响应携带本人的 `liked/favorited/can_edit/can_delete/can_review`，前端只绘制当前可执行的操作，服务端仍独立执行对象、比赛和审核权限。列表、详情与回复使用独立请求代次；分页失败可重试当前游标，迟到响应不能覆盖新选择。题单/讨论编辑在切换和离开时保留本标签页草稿，不保存密码类字段。
+`/learning` 为题单、讨论和题解的统一入口，使用紧凑横向筛选条和短列表行，桌面首屏可同时看到多个帖子；移动端筛选自动折为两列。游客看到登录引导，比赛临时账号看到只读范围说明；发布表单只在永久账号主动新建或编辑时显示。详情响应携带本人的 `liked/favorited/can_edit/can_delete/can_review`，前端只绘制当前可执行的操作，服务端仍独立执行对象、比赛和审核权限。列表、详情与回复使用独立请求代次；分页失败可重试当前游标，迟到响应不能覆盖新选择。题单/讨论编辑在切换和离开时保留本标签页草稿，不保存密码类字段。
+
+社区 Markdown 正文使用本地 CodeMirror 6 高亮和快捷工具栏，支持 `Ctrl/Cmd+B/I/K`、行内代码、代码块、标题、列表、引用及服务端安全预览。预览复用 Goldmark 禁用原始 HTML和 Bluemonday 净化的边界；无脚本 nonce 或编辑器失败时保留普通 textarea。
 
 `/rankings` 固定提供三个全局榜，按 50 条分页并每 30 秒刷新；每次渲染核对榜单类型、周期、页码和请求代次。题目页提供日常通过人数、通过率、本人通过状态及讨论/题解入口。
 
@@ -24,6 +26,7 @@
 | GET | `/api/community/:id` | 受权限保护的正文、安全 HTML、题单有序题目、计数、本人互动状态和可执行操作 |
 | POST / PUT | `/api/community` / `/api/community/:id` | 创建/编辑，编辑必须携带 revision |
 | POST | `/api/community/:id/actions` | action、revision；delete/approve/reject/favorite/unfavorite/like/unlike |
+| POST | `/api/community/preview` | 已登录用户安全预览 Markdown，返回净化 HTML |
 | GET | `/api/practice/problems/:id` | submissions、accepted、people、acceptance_rate（0～1）、solved |
 | GET | `/api/leaderboards/:kind` | practice/contest/solutions，page 从 1 开始；含快照时间和总人数 |
 
@@ -48,6 +51,6 @@
 
 独立 Docker 项目 `biue-batch3` 已升级至迁移 7，保留旧数据及独立卷。`python tools/check_community.py` 使用真实 Python 沙箱日常 AC，验证重复 AC/Run 排除、分类/通过率、私有题单与有序编辑、冲突、收藏/点赞幂等、跨上下文回复拒绝、父删除后回复不可见、比赛讨论权限、题解 AC 前置/审核/修改后重审/撤销、比赛打星退赛排除、多账号积分去重和删除快照后重建。
 
-`node tools/check_community_browser.cjs` 使用实际 Edge 验证桌面和 390px 手机视口，涵盖题单创建、Markdown 安全、排序编辑、收藏、三榜切换、题目统计及分类恢复，无 JavaScript 异常。截图位于 `.cache/4-learning-desktop.png`、`.cache/4-learning-mobile.png`。
+`node tools/check_community_browser.cjs` 保留批次 4 的桌面/手机安全与三榜回归。当前编辑器和管理布局由 `node tools/check_optimizations_browser.cjs`、`node tools/check_admin_experience_browser.cjs` 覆盖；后者验证 Markdown 快捷输入、净化预览、紧凑社区筛选和移动端布局。
 
 脚本沿用批次 3 的独立 Compose 环境和 Git 排除的 `.cache/2d-acceptance.env`，需初始化验收管理员（BIUE_SMOKE_PASSWORD）并启动 Worker/Runner。浏览器还需已安装 Windows Edge 与 `.cache/browser` 中的 Playwright。脚本创建唯一测试账号与内容，不清空数据库；只删除可重建的全局榜快照。没有进行生产容量或长期压力测试，相关事项归部署批次。

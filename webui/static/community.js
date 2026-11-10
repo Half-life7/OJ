@@ -149,6 +149,18 @@
   let lastListState = null;
   const filter = byID("learning-filter");
   const form = byID("learning-form");
+  function previewMarkdown(source) {
+    byID("learning-markdown-preview").hidden = false;
+    byID("learning-markdown-preview-html").textContent = "正在生成安全预览…";
+    api("/api/community/preview", "POST", { markdown: source }).then((result) => {
+      byID("learning-markdown-preview-html").innerHTML = result.html;
+    }).catch((error) => {
+      byID("learning-markdown-preview-html").textContent = error.message;
+    });
+  }
+  const bodyEditor = window.BiueEditor?.mount
+    ? window.BiueEditor.mount(form.elements.namedItem("body"), "markdown", { ariaLabel: "Markdown 正文", onPreview: previewMarkdown })
+    : null;
   for (const key of ["kind", "problem_id", "contest_id"]) {
     if (params.has(key)) {
       filter.elements.namedItem(key).value = params.get(key);
@@ -319,6 +331,7 @@
       byID("learning-editor-title").textContent = "发布内容";
     }
     restoreDraft();
+    bodyEditor?.setValue(form.elements.namedItem("body").value);
     savedEditor = formSnapshot();
     editorDirty = false;
     form.elements.title.focus?.();
@@ -350,6 +363,7 @@
     form.elements.title.value = `回复：${selected.title}`.slice(0, 200);
     for (const key of ["problem_id", "contest_id", "visibility"]) form.elements.namedItem(key).value = selected[key] ?? "";
     form.elements.parent_id.value = selected.id;
+    bodyEditor?.setValue(form.elements.namedItem("body").value);
     savedEditor = formSnapshot();
     editorDirty = false;
     byID("learning-editor-title").textContent = `回复 #${selected.id}`;
@@ -357,6 +371,7 @@
   };
   form.addEventListener("input", markDirty);
   form.addEventListener("change", markDirty);
+  byID("learning-markdown-preview-close").addEventListener("click", () => { byID("learning-markdown-preview").hidden = true; });
   form.onsubmit = (event) => {
     event.preventDefault();
     run(event.submitter, async () => {

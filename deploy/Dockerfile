@@ -26,6 +26,7 @@ RUN case "$ALPINE_MIRROR" in https://*) ;; *) exit 1 ;; esac \
     && chown -R 10001:10001 /app/oj-data
 WORKDIR /app
 COPY --from=builder --chown=10001:10001 /out/web /out/ojctl /out/worker /out/dispatcher /out/judge-runner /app/
+COPY --chown=10001:10001 导入样例 /app/导入样例
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \

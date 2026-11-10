@@ -36,7 +36,7 @@
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET / POST | `/api/contests` | 游标列表（`after`，最多 100 条）/超级管理员创建 |
-| GET / PUT | `/api/contests/:id` | 比赛、题面、名单、成绩/赛前配置更新（带 revision） |
+| GET / PUT | `/api/contests/:id` | 比赛、题面、名单、成绩/设置更新（带 revision；开始后应急编辑带 change_reason） |
 | GET | `/api/contests/:id/manage-options?q=` | 授权管理员按名称/编号搜索可绑定题目，并按账号、姓名或学号搜索人员及现有比赛管理员 |
 | POST | `/api/contests/:id/enroll` | 永久账号自由报名个人赛 |
 | POST | `/api/contests/:id/manage` | 授权管理员管理题目、队伍、状态；超级管理员授予/撤销比赛管理员 |
@@ -53,6 +53,14 @@ manage 的 action：`add_problem` / `remove_problem`、`add_team`（name、membe
 
 非成员只能读取比赛配置；普通成员赛前看不到题面。名单/榜单对成员及授权管理员开放；提交源码仅本人、该比赛管理员、超级管理员可读。结算后只允许报废临时账号，不允许再改变比赛成绩配置或启动人工重试。
 
+## 应急编辑
+
+比赛详情侧栏提供“应急编辑比赛”，直接在 `/contests/:id` 内修改，不跳回创建页。未结算比赛允许调整名称、报名方式、审核开关、开始和结束时间；开始后必须填写 1～255 字符的变更原因，变更前后值、目标和 request ID 写入审计。
+
+开始后计分模式和个人/团队模式锁定，前端禁用并说明原因；普通标题、报名配置和时间仍可应急修正。已将结束时间提前/延长的比赛可继续修正；已结束比赛若延长，新结束时间必须晚于服务器当前时间。时间变化仍须满足结束晚于开始且总历时不超过 30 天，revision 冲突返回 409，已结算比赛拒绝设置修改。
+
+CSV 导入接受 `username/账号/用户名`、`display_name/姓名`、`student_no/学号`、`organization/学校/组织`、`team/队伍/队名`、`participant_type/选手类型` 等别名。预览返回规范化列映射，未知列和重复映射拒绝；页面同时给出每一列的中文说明和示例。
+
 ## 复现命令
 
 使用独立 `biue-batch3` 项目及单独环境文件，先配置示例环境变量和验收管理员。`tools/contest-test.compose.yml` 为测试网段覆盖，避免与开发网段冲突。脚本默认读取 `.cache/2d-acceptance.env`，可通过 `--env-file` 指定；另需 `BIUE_SMOKE_PASSWORD` 为测试管理员密码，不输出凭据。
@@ -65,7 +73,7 @@ go test -race ./...
 node --check webui/static/contests.js
 python tools/check_contests.py
 python tools/check_contest_runtime.py
-node tools/check_contest_browser.cjs
+node tools/check_admin_experience_browser.cjs
 ```
 
 SQL 夹具脚本需在独立测试项目中、Worker/dispatcher 停止时运行；随后启动 Worker/dispatcher/Runner 再执行 runtime 脚本。浏览器脚本在 Windows 使用已安装的 Edge，Playwright 安装在 `.cache/browser`（`npm install --prefix .cache/browser playwright`）；默认使用上述验收环境文件。测试脚本创建新记录，不清空库或删除既有数据。

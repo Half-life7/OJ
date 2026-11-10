@@ -133,6 +133,9 @@
   }
 
   const createForm = byID("contest-create-form");
+  const contestSourceEditor = page === "contests" && window.BiueEditor?.mount
+    ? window.BiueEditor.mount(byID("contest-submit-form").elements.source_code, byID("contest-submit-form").elements.language.value || "cpp17", { ariaLabel: "比赛提交源码" })
+    : null;
   const createFields = () => [...createForm.elements].filter((field) => field.name !== "edit_current");
   let user = null;
   let selected = null;
@@ -273,7 +276,7 @@
     document.title = "比赛中心 · Biue OJ";
   }
   function setDetailBusy(busy) {
-    for (const id of ["contest-submit-form", "contest-manage-form", "contest-csv-form", "contest-temporary-form", "contest-history-form"]) {
+    for (const id of ["contest-submit-form", "contest-live-edit-form", "contest-manage-form", "contest-csv-form", "contest-temporary-form", "contest-history-form"]) {
       const form = byID(id);
       for (const field of form.elements) field.disabled = busy;
     }
@@ -289,7 +292,7 @@
   }
   function switchPanel(name) {
     if (!view) return;
-    if (!view.manager && ["manage", "import", "accounts", "settle"].includes(name)) name = "overview";
+    if (!view.manager && ["edit", "manage", "import", "accounts", "settle"].includes(name)) name = "overview";
     activePanel = name;
     for (const button of document.querySelectorAll("[data-contest-panel]")) button.classList.toggle("active", button.dataset.contestPanel === name);
     for (const section of document.querySelectorAll("[data-contest-panel-content]")) section.hidden = section.dataset.contestPanelContent !== name;
@@ -339,6 +342,7 @@
     const language = byID("contest-submit-form").elements.language;
     for (const option of language.options) option.disabled = outputOnly ? option.value !== "text" : option.value === "text";
     if (language.selectedOptions[0]?.disabled) language.value = outputOnly ? "text" : "cpp17";
+    contestSourceEditor?.setLanguage(language.value);
     byID("contest-submit-form").elements.source_code.placeholder = outputOnly
       ? JSON.stringify(Object.fromEntries((problem.output_cases || []).map((caseID) => [caseID, ""])), null, 2)
       : "";
@@ -358,8 +362,14 @@
     for (const problem of view.problems) {
       const article = node("article", undefined, "contest-problem-card");
       article.append(node("h3", `${problem.problem_id}. ${problem.statement.title || "题目"}`));
-      for (const [key, label] of [["description", "题面"], ["input_format", "输入"], ["output_format", "输出"], ["sample_input", "样例输入"], ["sample_output", "样例输出"]]) {
-        if (problem.statement[key]) article.append(node("h4", label), node("pre", problem.statement[key]));
+      for (const [key, label, htmlKey] of [["description", "题面", "description_html"], ["input_format", "输入", "input_format_html"], ["output_format", "输出", "output_format_html"], ["sample_input", "样例输入", ""], ["sample_output", "样例输出", ""]]) {
+        if (problem.statement[htmlKey]) {
+          const prose = node("div", undefined, "learning-prose");
+          prose.innerHTML = problem.statement[htmlKey];
+          article.append(node("h4", label), prose);
+        } else if (problem.statement[key]) {
+          article.append(node("h4", label), node("pre", problem.statement[key]));
+        }
       }
       byID("contest-problems").append(article);
       const option = node("option", `${problem.problem_id}. ${problem.statement.title || "题目"}`);
@@ -373,7 +383,34 @@
       ? `你在本比赛中的身份：${view.teams.filter((team) => teamIDs.has(team.id)).map((team) => `${team.name}（${team.participant_type} / ${team.status}）`).join("，")}`
       : contest.team_mode ? "本比赛为管理员组队；如名单没有你，请联系比赛管理员。" : "当前账号尚未报名。";
     byID("contest-identity-link").href = view.manager ? "/admin/identities" : "/me";
+    renderLiveEdit();
     switchPanel(activePanel);
+  }
+  function renderLiveEdit() {
+    if (!selected) return;
+    const form = byID("contest-live-edit-form");
+    const fields = form.elements;
+    fields.title.value = selected.title;
+    fields.scoring_mode.value = selected.scoring_mode;
+    fields.enrollment_policy.value = selected.enrollment_policy;
+    fields.starts_at.value = localTime(selected.starts_at);
+    fields.ends_at.value = localTime(selected.ends_at);
+    fields.approval_required.checked = selected.approval_required;
+    fields.team_mode.checked = selected.team_mode;
+    fields.change_reason.value = "";
+    const started = new Date(selected.starts_at) <= new Date();
+    const settled = !!selected.settled_at;
+    fields.scoring_mode.disabled = started || settled;
+    fields.team_mode.disabled = started || settled;
+    for (const field of fields) {
+      if (field !== fields.scoring_mode && field !== fields.team_mode) field.disabled = settled;
+    }
+    byID("contest-live-mode-help").textContent = started ? "比赛已开始，计分模式和团队模式已锁定。" : "比赛开始前仍可调整计分模式。";
+    byID("contest-live-impact").textContent = !started
+      ? "当前仍是赛前，可普通编辑；开始后每次修改必须填写原因。"
+      : settled
+        ? "比赛已结算，设置已锁定。"
+        : "状态为进行中或已结束但未结算。修改结束时间会立即影响提交准入与结算资格，请核对作用对象后保存。";
   }
   async function loadDetail(id) {
     if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw new APIError("比赛编号无效。", 400);
@@ -405,6 +442,7 @@
       if (sequence === detailEpoch) {
         detailLoading = false;
         setDetailBusy(!selected);
+        if (selected) renderLiveEdit();
         byID("contest-csv-confirm").disabled = !csvState;
         for (const button of document.querySelectorAll(".contest-nav-item")) button.disabled = false;
       }
@@ -526,6 +564,7 @@
     const target = byID("contest-csv-preview");
     target.replaceChildren(node("h3", `预览所属：${state.title}（#${state.contestID}）`));
     target.append(node("p", `${preview.rows.length} 行 · ${preview.valid ? "可以导入" : "存在错误"} · 令牌仅绑定此比赛和此 CSV 内容`));
+    if (preview.columns?.length) target.append(node("p", `已识别列：${preview.columns.map((column) => `${column.source} → ${column.field}`).join("；")}`, "field-help"));
     for (const row of preview.rows) target.append(node("p", `第 ${row.line} 行 · ${row.username} · ${row.team} · ${row.participant_type} · ${row.error || "可导入"}`));
   }
   function renderSettleTarget() {
@@ -620,15 +659,55 @@
   byID("contest-create-toggle").addEventListener("click", (event) => { event.preventDefault(); setEditMode(false); showCreate(); });
   byID("contest-create-close").addEventListener("click", () => { if (mayDiscard()) byID("contest-create").hidden = true; });
   byID("contest-edit-current").addEventListener("change", (event) => setEditMode(event.target.checked));
-  byID("contest-edit").addEventListener("click", () => {
-    if (!selected || new Date(selected.starts_at) <= new Date() || selected.settled_at) {
-      message("contest-detail-message", "只有尚未开始且未结算的比赛可以编辑。");
+  byID("contest-live-edit-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!selected) return;
+    const fields = event.target.elements;
+    const start = new Date(fields.starts_at.value);
+    const end = new Date(fields.ends_at.value);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+      message("contest-detail-message", "开始和结束时间无效，结束时间必须晚于开始时间。");
       return;
     }
-    history.pushState({}, "", "/contests");
-    showCenter();
-    setEditMode(true);
-    showCreate();
+    if (end - start > 30 * 86400000) {
+      message("contest-detail-message", "比赛持续时间不能超过 30 天。");
+      return;
+    }
+    const started = new Date(selected.starts_at) <= new Date();
+    if (started && !fields.change_reason.value.trim()) {
+      message("contest-detail-message", "比赛开始后修改设置必须填写变更原因。");
+      fields.change_reason.focus();
+      return;
+    }
+    const timeChanged = start.getTime() !== new Date(selected.starts_at).getTime() || end.getTime() !== new Date(selected.ends_at).getTime();
+    if (timeChanged && !window.confirm(`将修改“${selected.title}”（#${selected.id}）的比赛时间。这会立即影响提交准入和结算，确认保存？`)) return;
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const id = selected.id;
+      const input = {
+        title: fields.title.value.trim(),
+        scoring_mode: selected.scoring_mode,
+        enrollment_policy: fields.enrollment_policy.value,
+        starts_at: start.toISOString(),
+        ends_at: end.toISOString(),
+        approval_required: fields.approval_required.checked,
+        team_mode: selected.team_mode,
+        revision: selected.revision,
+        change_reason: fields.change_reason.value.trim(),
+      };
+      try {
+        await api(`/api/contests/${id}`, "PUT", input);
+      } catch (error) {
+        if (error.fields) {
+          const labels = { title: "名称", scoring_mode: "计分模式", enrollment_policy: "报名方式", starts_at: "开始时间", ends_at: "结束时间", team_mode: "团队模式", change_reason: "变更原因" };
+          error.message = Object.entries(error.fields).map(([key, value]) => `${labels[key] || key}：${value}`).join("；") + (error.requestID ? `（请求 ID：${error.requestID}）` : "");
+        }
+        throw error;
+      }
+      await loadDetail(id);
+      activePanel = "edit";
+      switchPanel("edit");
+      message("contest-detail-message", `“${selected.title}”（#${selected.id}）设置已保存，当前仍在比赛工作区。`, true);
+    }, "contest-detail-message");
   });
   byID("contest-more").addEventListener("click", (event) => run(event.target, () => list(true), "contest-message"));
   byID("contest-refresh").addEventListener("click", (event) => run(event.target, () => selected && loadDetail(selected.id), "contest-detail-message"));
@@ -652,6 +731,7 @@
     else showCenter();
   });
   byID("contest-problem-select").addEventListener("change", contestLanguageControls);
+  byID("contest-submit-form").elements.language.addEventListener("change", () => contestSourceEditor?.setLanguage(byID("contest-submit-form").elements.language.value));
   for (const id of ["contest-search", "contest-filter-type", "contest-filter-status", "contest-filter-account", "contest-filter-submissions"]) byID(id).addEventListener("input", renderRoster);
   byID("contest-manage-action").addEventListener("change", syncManageFields);
   for (const id of ["contest-problem-option", "contest-user-option", "contest-admin-option", "contest-team-option"]) byID(id).addEventListener("change", syncManageFields);

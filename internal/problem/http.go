@@ -9,11 +9,13 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"biue/internal/auth"
 	"biue/internal/httpx"
+	"biue/internal/markdownsafe"
 	"biue/internal/server"
 	"biue/internal/testcase"
 
@@ -25,6 +27,7 @@ type Operations interface {
 	Get(context.Context, Actor, uint64) (Problem, error)
 	Create(context.Context, Actor, Input, string) (Problem, error)
 	Update(context.Context, Actor, uint64, Input, string) (Problem, error)
+	ImportPackage(context.Context, Actor, ProblemPackage, string) (Problem, error)
 	Import(context.Context, Actor, uint64, uint64, testcase.Dataset, string, string) (DataVersion, error)
 	ListDataVersions(context.Context, Actor, uint64, int, int) (VersionPage, error)
 	GetDataVersion(context.Context, Actor, uint64, uint64) (DataVersion, error)
@@ -38,6 +41,7 @@ type Handler struct {
 	service Operations
 	auth    Authenticator
 	imports chan struct{}
+	samples string
 }
 
 func NewHandler(service Operations, authenticator Authenticator, concurrency int) (*Handler, error) {
@@ -45,6 +49,10 @@ func NewHandler(service Operations, authenticator Authenticator, concurrency int
 		return nil, errors.New("invalid problem HTTP dependencies")
 	}
 	return &Handler{service: service, auth: authenticator, imports: make(chan struct{}, concurrency)}, nil
+}
+
+func (h *Handler) SetSampleDirectory(directory string) {
+	h.samples = directory
 }
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
@@ -58,6 +66,9 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	admin.GET("/:id/data-versions", h.versions)
 	admin.POST("/:id/data-versions", h.importData)
 	admin.GET("/:id/data-versions/:version", h.version)
+	admin.POST("/markdown-preview", h.previewMarkdown)
+	admin.POST("/package-preview", h.previewPackage)
+	admin.POST("/package-import", h.importPackage)
 }
 
 const actorKey = "problem-admin-actor"
@@ -100,6 +111,8 @@ func respond(c *gin.Context, status, code int, message string, data any) {
 func problemError(c *gin.Context, err error) {
 	c.Abort()
 	switch {
+	case errors.Is(err, ErrInvalidPackage):
+		respond(c, 400, 40001, "题包格式或测试数据不合法；请检查 problem.yaml、Markdown 和 testdata/config.yaml", nil)
 	case errors.Is(err, testcase.ErrInvalidPath):
 		respond(c, 400, 40001, "测试文件名不合法；只接受根目录下由字母、数字、下划线或连字符组成的 .in/.out 文件", nil)
 	case errors.Is(err, testcase.ErrPairing):
@@ -257,6 +270,125 @@ func (h *Handler) version(c *gin.Context) {
 		return
 	}
 	respond(c, 200, 0, "success", result)
+}
+
+func (h *Handler) previewMarkdown(c *gin.Context) {
+	var input struct {
+		Markdown string `json:"markdown"`
+	}
+	if err := c.ShouldBindWith(&input, httpx.JSONBinding{MaxBytes: 128 << 10}); err != nil {
+		problemError(c, err)
+		return
+	}
+	rendered, err := markdownsafe.Render(input.Markdown, 64<<10)
+	if errors.Is(err, markdownsafe.ErrInvalid) {
+		problemError(c, ErrInvalid)
+		return
+	}
+	if err != nil {
+		problemError(c, ErrUnavailable)
+		return
+	}
+	respond(c, 200, 0, "success", map[string]string{"html": rendered})
+}
+
+func (h *Handler) readPackage(c *gin.Context) (ProblemPackage, string, error) {
+	if c.Request.ContentLength > maxImportRequest {
+		return ProblemPackage{}, "", testcase.ErrLimitExceeded
+	}
+	controller := http.NewResponseController(c.Writer)
+	deadline := time.Now().Add(importBudget)
+	_ = controller.SetReadDeadline(deadline)
+	_ = controller.SetWriteDeadline(deadline)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxImportRequest)
+	reader, err := c.Request.MultipartReader()
+	if err != nil {
+		return ProblemPackage{}, "", ErrInvalidPackage
+	}
+	var archive []byte
+	sample := false
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return ProblemPackage{}, "", ErrInvalidPackage
+		}
+		switch part.FormName() {
+		case "archive":
+			if part.FileName() == "" || archive != nil {
+				return ProblemPackage{}, "", ErrInvalidPackage
+			}
+			archive, err = io.ReadAll(io.LimitReader(part, maxPackageArchiveBytes+1))
+			if err != nil || len(archive) > maxPackageArchiveBytes {
+				return ProblemPackage{}, "", ErrInvalidPackage
+			}
+		case "sample":
+			value, readErr := io.ReadAll(io.LimitReader(part, 8))
+			if readErr != nil || part.FileName() != "" || string(bytes.TrimSpace(value)) != "1" || sample {
+				return ProblemPackage{}, "", ErrInvalidPackage
+			}
+			sample = true
+		default:
+			return ProblemPackage{}, "", ErrInvalidPackage
+		}
+		_ = part.Close()
+	}
+	if _, err := io.Copy(io.Discard, c.Request.Body); err != nil {
+		return ProblemPackage{}, "", ErrInvalidPackage
+	}
+	if sample == (archive != nil) {
+		return ProblemPackage{}, "", ErrInvalidPackage
+	}
+	if sample {
+		if strings.TrimSpace(h.samples) == "" {
+			return ProblemPackage{}, "", ErrInvalidPackage
+		}
+		pkg, err := ParsePackageDirectory(c.Request.Context(), h.samples)
+		return pkg, "builtin", err
+	}
+	pkg, err := ParsePackageZIP(c.Request.Context(), archive)
+	return pkg, "upload", err
+}
+
+func (h *Handler) previewPackage(c *gin.Context) {
+	select {
+	case h.imports <- struct{}{}:
+		defer func() { <-h.imports }()
+	default:
+		c.Header("Retry-After", "5")
+		respond(c, 429, 42901, "正在处理其他导入，请稍后重试", nil)
+		return
+	}
+	pkg, source, err := h.readPackage(c)
+	if err != nil {
+		problemError(c, err)
+		return
+	}
+	respond(c, 200, 0, "success", map[string]any{"preview": pkg.Preview, "source": source})
+}
+
+func (h *Handler) importPackage(c *gin.Context) {
+	select {
+	case h.imports <- struct{}{}:
+		defer func() { <-h.imports }()
+	default:
+		c.Header("Retry-After", "5")
+		respond(c, 429, 42901, "正在处理其他导入，请稍后重试", nil)
+		return
+	}
+	pkg, _, err := h.readPackage(c)
+	if err != nil {
+		problemError(c, err)
+		return
+	}
+	result, err := h.service.ImportPackage(c.Request.Context(), currentActor(c), pkg, server.RequestID(c.Request.Context()))
+	if err != nil {
+		problemError(c, err)
+		return
+	}
+	respond(c, 201, 0, "success", result)
 }
 
 const (

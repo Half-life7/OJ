@@ -11,13 +11,13 @@
 
 ## 管理功能
 
-`/admin` 提供账号 ID/姓名/学号搜索、禁用/恢复、提交历史、统计/就绪状态、审计、死信重试和消息隔离列表，并链接身份、题目、比赛和社区管理页面。禁用账号同时增加 token_version 并撤销全部会话；恢复后须重新登录。本人和最后的有效超级管理员不能被禁用；已报废临时账号不能通过此接口重新启用。
+`/admin` 采用左侧导航和中栏分层工作区："管理概览、测试中心、账号管理、队列与死信、审计与重判"只在当前选中板块加载。概览链接身份、题目、比赛和社区管理页面；测试中心内部再分为“系统检查、编辑器、CSV 样例、题包导入”四个子页签，提供真实系统诊断、代码/Markdown 编辑器演示、CSV 表头样例和外部题包预览/导入；账号板块提供 ID/姓名/学号搜索、禁用/恢复和提交历史；队列板块提供死信重试与消息隔离；审计板块提供审计读取和批量重判。禁用账号同时增加 token_version 并撤销全部会话；恢复后须重新登录。本人和最后的有效超级管理员不能被禁用；已报废临时账号不能通过此接口重新启用。
 
 `/api/admin/operations` 下的 users、users/:id/status、users/:id/submissions、metrics、audits、dead-letters、dead-letters/:id/retry、quarantine 全部要求当前有效的永久超级管理员。列表默认最多 100 条；users/audits/submissions 的 after 为 ID 游标，quarantine 的 after 为偏移量。后台不返回密码哈希、会话密钥或原始隔离消息。Web 不获得 Docker 权限；Runner 就绪状态经 Worker 验证，日志通过部署 CLI 查看。
 
 比赛管理增加 freeze / unfreeze / bulk_status 动作。bulk_status 接受最多 500 个不重复 team_ids、status=active/withdrawn、participant_type=official/star，同事务全部成功或全部回滚。封榜快照追加至 contest_freezes，重复封榜不刷新当前快照；解封仅关闭当前记录。结算后仍能解封，超级管理员仍可授予或撤销比赛管理员，成绩与积分保持锁定。授权管理员一直查看实时成绩。普通成员仍能提交和查看本人结果，但榜单只返回冻结的成绩。
 
-CSV 接口：`POST /api/contests/:id/csv/preview` 接收 `{csv}`；首列须有 username，可选 display_name、student_no、organization、team、participant_type。UTF-8 可带 BOM，最多 256 KiB / 500 行，未知/重复列、格式错误拒绝。预览逐行报告未知账号、学号/姓名/组织冲突、重复身份、已参赛和队伍人数问题。不会更新身份信息或静默合并账号。
+CSV 接口：`POST /api/contests/:id/csv/preview` 接收 `{csv}`；至少需要 username/账号，可选姓名、学号、学校或组织、队伍、选手类型。解析器自动识别中英文别名、BOM、大小写和首尾空白，返回规范化列映射；未知列或两个别名映射到同一字段时拒绝。UTF-8 最多 256 KiB / 500 行。预览逐行报告未知账号、学号/姓名/组织冲突、重复身份、已参赛和队伍人数问题。不会更新身份信息或静默合并账号。测试中心可用相同规则生成当前页面样例，不写正式比赛。
 
 确认接口 `POST /api/contests/:id/csv/confirm` 接收 `{token}`。令牌绑定当前操作人和比赛，有效期 15 分钟，确认时重新解析并核对用户/身份/revision；MySQL 的 JSON 格式化不影响比较。只有全部行有效才原子创建队伍，重复确认不重复添加；开始后不能导入。后台支持选择 CSV 文件、查看预览，再明确确认。
 
@@ -37,7 +37,7 @@ sudo bash deploy.sh logs
 
 安装交互式读取初始管理员密码（不回显）；非交互方式通过 `OJ_ADMIN_PASSWORD` 环境变量传入，勿把口令写入命令行参数或版本库。默认账号 admin，可用 OJ_ADMIN_USERNAME 指定。重复 install 保留 `.env` 和既有账号，不重置密码。生成七个独立随机密钥/口令，配置权限 600，应用与 Runner 分离凭据。脚本从持久配置获取 Compose 变量，父进程中同名 MYSQL_PASSWORD/PUBLIC_HTTP_PORT 等不会覆盖保存配置。
 
-可选首次参数：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TIMEZONE、OJ_JUDGE_CONCURRENCY、OJ_EDGE_SUBNET、OJ_NGINX_IP。更换数据目录或项目名后，所有维护命令必须传入相同值。已有配置的日常修改在 DATA_DIR/config/.env 进行，install 不覆盖；改端口/时区/并发后运行 restart，改入口协议/证书后运行 install 并重启。数据库口令不能只修改 env 而不修改数据库账号。
+可选首次参数：OJ_DATA_DIR、OJ_PROJECT、OJ_PUBLIC_URL、OJ_HTTP_PORT、OJ_HTTPS_PORT、OJ_PUBLIC_BIND、OJ_TIMEZONE、OJ_JUDGE_CONCURRENCY、OJ_EDGE_SUBNET、OJ_NGINX_IP。应用支持 `PROBLEM_SAMPLE_DIR` 指定内置题包目录，镜像默认 `/app/导入样例`。更换数据目录或项目名后，所有维护命令必须传入相同值。已有配置的日常修改在 DATA_DIR/config/.env 进行，install 不覆盖；改端口/时区/并发后运行 restart，改入口协议/证书后运行 install 并重启。数据库口令不能只修改 env 而不修改数据库账号。
 
 ## 公网来源与日志定位
 

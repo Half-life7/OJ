@@ -71,6 +71,7 @@ func run() error {
 	if err != nil {
 		return errors.New("cannot initialize problem HTTP handlers")
 	}
+	problemHTTP.SetSampleDirectory(cfg.ProblemSampleDir)
 	submissions, err := submission.New(db, submission.Config{QueueCapacity: cfg.JudgeQueueCapacity}, logger)
 	if err != nil {
 		return errors.New("cannot initialize submissions")

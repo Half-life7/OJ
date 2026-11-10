@@ -112,3 +112,29 @@ func TestManageOptionsSearchIsScopedToAuthorizedManager(t *testing.T) {
 		t.Fatalf("unexpected options: %+v", result)
 	}
 }
+
+func TestContestCanBeEditedAfterStartWithReason(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	old := Contest{Title: "Old", Mode: "OI", Policy: "open", Start: now.Add(-time.Hour), End: now.Add(30 * time.Minute)}
+	edited := old
+	edited.End = now.Add(90 * time.Minute)
+	edited.Reason = "network outage"
+	if err := validateContestEdit(edited, now, old); err != nil {
+		t.Fatal(err)
+	}
+	edited.End = now.Add(-time.Minute)
+	if err := validateContestEdit(edited, now, old); err != nil {
+		t.Fatalf("active contest may be ended early: %v", err)
+	}
+}
+
+func TestContestLiveEditLocksStructuralFieldsAndRequiresReason(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	old := Contest{Title: "Old", Mode: "OI", Policy: "open", Start: now.Add(-time.Hour), End: now.Add(time.Hour)}
+	edited := old
+	edited.Mode = "ACM"
+	var fields *FieldError
+	if err := validateContestEdit(edited, now, old); !errors.As(err, &fields) || fields.Fields["scoring_mode"] == "" || fields.Fields["change_reason"] == "" {
+		t.Fatalf("get %+v", err)
+	}
+}

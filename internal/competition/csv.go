@@ -27,36 +27,53 @@ type ImportRow struct {
 	Error    string `json:"error,omitempty"`
 }
 type ImportPreview struct {
-	Token string      `json:"token"`
-	Rows  []ImportRow `json:"rows"`
-	Valid bool        `json:"valid"`
+	Token   string          `json:"token"`
+	Rows    []ImportRow     `json:"rows"`
+	Columns []ColumnMapping `json:"columns"`
+	Valid   bool            `json:"valid"`
 }
 
-func parseRoster(raw string) ([]map[string]string, error) {
+type ColumnMapping struct {
+	Source   string `json:"source"`
+	Field    string `json:"field"`
+	Required bool   `json:"required"`
+}
+
+var rosterHeaderAliases = map[string]string{
+	"username": "username", "user": "username", "account": "username", "账号": "username", "用户名": "username", "账号id": "username",
+	"display_name": "display_name", "name": "display_name", "姓名": "display_name", "显示名称": "display_name",
+	"student_no": "student_no", "student": "student_no", "学号": "student_no",
+	"organization": "organization", "school": "organization", "学校": "organization", "组织": "organization", "学校或组织": "organization",
+	"team": "team", "team_name": "team", "队伍": "team", "队名": "team",
+	"participant_type": "participant_type", "type": "participant_type", "类型": "participant_type", "选手类型": "participant_type",
+}
+
+func parseRoster(raw string) ([]map[string]string, []ColumnMapping, error) {
 	if len(raw) > 256<<10 || !utf8.ValidString(raw) {
-		return nil, ErrInvalid
+		return nil, nil, ErrInvalid
 	}
 	r := csv.NewReader(strings.NewReader(strings.TrimPrefix(raw, "\ufeff")))
 	headers, e := r.Read()
 	if e != nil {
-		return nil, ErrInvalid
+		return nil, nil, ErrInvalid
 	}
 	seen := map[string]bool{}
+	columns := make([]ColumnMapping, 0, len(headers))
 	for i, h := range headers {
-		h = strings.ToLower(strings.TrimSpace(h))
-		switch h {
-		case "username", "display_name", "student_no", "organization", "team", "participant_type":
-		default:
-			return nil, ErrInvalid
+		source := strings.TrimSpace(h)
+		canonical := rosterHeaderAliases[strings.ToLower(source)]
+		if canonical == "" {
+			return nil, nil, ErrInvalid
 		}
-		if seen[h] {
-			return nil, ErrInvalid
+		if seen[canonical] {
+			return nil, nil, ErrInvalid
 		}
-		seen[h] = true
-		headers[i] = h
+		seen[canonical] = true
+		headers[i] = canonical
+		columns = append(columns, ColumnMapping{Source: source, Field: canonical, Required: canonical == "username"})
 	}
 	if !seen["username"] {
-		return nil, ErrInvalid
+		return nil, nil, ErrInvalid
 	}
 	rows := []map[string]string{}
 	for {
@@ -65,7 +82,7 @@ func parseRoster(raw string) ([]map[string]string, error) {
 			break
 		}
 		if e != nil || len(rows) >= 500 {
-			return nil, ErrInvalid
+			return nil, nil, ErrInvalid
 		}
 		row := map[string]string{}
 		for i, v := range fields {
@@ -74,14 +91,14 @@ func parseRoster(raw string) ([]map[string]string, error) {
 		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
-		return nil, ErrInvalid
+		return nil, nil, ErrInvalid
 	}
-	return rows, nil
+	return rows, columns, nil
 }
-func resolveRoster(ctx context.Context, tx *sqlx.Tx, c Contest, raw string) ([]ImportRow, bool, error) {
-	source, e := parseRoster(raw)
+func resolveRoster(ctx context.Context, tx *sqlx.Tx, c Contest, raw string) ([]ImportRow, bool, []ColumnMapping, error) {
+	source, columns, e := parseRoster(raw)
 	if e != nil {
-		return nil, false, e
+		return nil, false, nil, e
 	}
 	rows := []ImportRow{}
 	seenUsers, seenPersons := map[uint64]bool{}, map[uint64]bool{}
@@ -110,7 +127,7 @@ func resolveRoster(ctx context.Context, tx *sqlx.Tx, c Contest, raw string) ([]I
 		if e == sql.ErrNoRows {
 			row.Error = "账号不存在"
 		} else if e != nil {
-			return nil, false, e
+			return nil, false, nil, e
 		} else {
 			row.UserID, row.PersonID, row.Revision = p.User, p.Person, p.Revision
 			switch {
@@ -129,7 +146,7 @@ func resolveRoster(ctx context.Context, tx *sqlx.Tx, c Contest, raw string) ([]I
 			}
 			var exists int
 			if e = tx.GetContext(ctx, &exists, `SELECT COUNT(*) FROM contest_team_members WHERE contest_id=? AND (user_id=? OR person_id=?)`, c.ID, p.User, p.Person); e != nil {
-				return nil, false, e
+				return nil, false, nil, e
 			}
 			if exists != 0 {
 				row.Error = "账号或身份已在比赛中"
@@ -151,7 +168,7 @@ func resolveRoster(ctx context.Context, tx *sqlx.Tx, c Contest, raw string) ([]I
 		valid = valid && row.Error == ""
 		rows = append(rows, row)
 	}
-	return rows, valid, nil
+	return rows, valid, columns, nil
 }
 func (s *Service) PreviewCSV(ctx context.Context, a auth.User, id uint64, raw string) (ImportPreview, error) {
 	preview := ImportPreview{}
@@ -166,7 +183,7 @@ func (s *Service) PreviewCSV(ctx context.Context, a auth.User, id uint64, raw st
 		if !s.now().Before(c.Start) || c.Settled != nil {
 			return ErrConflict
 		}
-		preview.Rows, preview.Valid, e = resolveRoster(ctx, tx, c, raw)
+		preview.Rows, preview.Valid, preview.Columns, e = resolveRoster(ctx, tx, c, raw)
 		if e != nil {
 			return e
 		}
@@ -217,7 +234,7 @@ func (s *Service) ConfirmCSV(ctx context.Context, a auth.User, id uint64, token 
 		if !s.now().Before(saved.Expires) || !s.now().Before(c.Start) || c.Settled != nil {
 			return ErrConflict
 		}
-		rows, valid, e := resolveRoster(ctx, tx, c, saved.CSV)
+		rows, valid, _, e := resolveRoster(ctx, tx, c, saved.CSV)
 		if e != nil {
 			return e
 		}

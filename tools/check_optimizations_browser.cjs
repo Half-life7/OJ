@@ -35,16 +35,21 @@ const local = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 600
     await page.locator("#problem-admin").waitFor({ state: "visible" });
     await page.locator("#problem-new").click();
     await page.locator("#edit-title").fill(problemTitle);
-    await page.locator("#edit-description").fill("Direct files and public visibility acceptance.");
-    await page.locator("#edit-input-format").fill("Two integers");
-    await page.locator("#edit-output-format").fill("Their sum");
+    await page.locator("#edit-description + .editor-toolbar + .code-editor .cm-content").fill("Direct files and public visibility acceptance.");
+    await page.locator("#edit-input-format + .editor-toolbar + .code-editor .cm-content").fill("Two integers");
+    await page.locator("#edit-output-format + .editor-toolbar + .code-editor .cm-content").fill("Their sum");
     await page.locator("#edit-sample-input").fill("1 2\n");
     await page.locator("#edit-sample-output").fill("3\n");
     await page.locator("#edit-status").selectOption("draft");
     await page.locator("#edit-visibility").selectOption("public");
     assert.equal(await page.locator("#edit-status").inputValue(), "published", "public must publish the problem");
     await page.locator("#problem-save").click();
-    await page.waitForFunction(() => !document.querySelector("#problem-upload-fields").disabled);
+    try {
+      await page.waitForFunction(() => !document.querySelector("#problem-upload-fields").disabled);
+    } catch (error) {
+      console.error("problem save:", await page.locator("#problem-editor-message").innerText());
+      throw error;
+    }
 
     await page.locator("#data-files").setInputFiles([
       { name: "1.in", mimeType: "text/plain", buffer: Buffer.from("1 2\n") },
@@ -131,8 +136,8 @@ const local = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 600
     assert.equal(await page.locator("#learning-form").isVisible(), false);
     await page.locator("#learning-new").click();
     await page.locator("#learning-form [name=title]").fill(communityTitle);
-    await page.locator("#learning-form [name=body]").fill("# Acceptance\n\nSafe content.");
-    await page.locator("#learning-form button").click();
+    await page.locator("#learning-form .cm-content").fill("# Acceptance\n\nSafe content.");
+    await page.locator("#learning-form > button").click();
     await page.locator("#learning-title").filter({ hasText: communityTitle }).waitFor();
     assert.equal(await page.locator("#learning-favorite").isVisible(), true);
     assert.equal(await page.locator("#learning-unfavorite").isVisible(), false);

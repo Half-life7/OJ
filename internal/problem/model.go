@@ -44,7 +44,10 @@ type Input struct {
 }
 
 type Problem struct {
-	OutputCases []string `json:"output_cases,omitempty"`
+	OutputCases     []string `json:"output_cases,omitempty"`
+	DescriptionHTML string   `json:"description_html,omitempty"`
+	InputHTML       string   `json:"input_html,omitempty"`
+	OutputHTML      string   `json:"output_html,omitempty"`
 	Input
 	ID               uint64    `json:"id"`
 	StatementVersion uint64    `json:"statement_version"`

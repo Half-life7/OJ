@@ -219,6 +219,29 @@ func TestPublicListFiltersAreParameterized(t *testing.T) {
 	}
 }
 
+func TestPublicProblemRendersSanitizedMarkdown(t *testing.T) {
+	f := newServiceFixture(t)
+	input := validInput()
+	input.Description = "# Safe\n\n<script>alert(1)</script>\n\n**bold**"
+	input.InputFormat = "`n` integers"
+	input.OutputFormat = "**answer**"
+	snapshot, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mock.ExpectQuery("SELECT .* FROM problems p WHERE p.id = .* AND p.status = 'published' AND p.visibility = 'public'").WithArgs(uint64(42)).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "snapshot_json", "revision", "statement_version", "data_version", "creator_id", "created_at", "updated_at"}).AddRow(42, snapshot, 1, 1, 0, 7, testNow, testNow),
+	)
+	problem, err := f.service.Get(context.Background(), Actor{}, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(problem.DescriptionHTML, "<h1>Safe</h1>") || !strings.Contains(problem.DescriptionHTML, "<strong>bold</strong>") ||
+		strings.Contains(strings.ToLower(problem.DescriptionHTML), "<script") || !strings.Contains(problem.InputHTML, "<code>n</code>") {
+		t.Fatalf("markdown not rendered safely: %+v", problem)
+	}
+}
+
 func TestPaginationAndFilterValidationBeforeDatabase(t *testing.T) {
 	for _, opts := range []ListOptions{{Page: -1}, {Page: 100001}, {Limit: -1}, {Limit: 101}, {Difficulty: "invalid"}, {Status: "invalid"}, {Visibility: "invalid"}, {Query: string([]byte{0xff})}, {Tag: "\x00"}} {
 		f := newServiceFixture(t)
@@ -261,6 +284,31 @@ func TestCreateAuditFailureRollsBackEntireObject(t *testing.T) {
 	got, err := f.service.Create(context.Background(), testAdmin, validInput(), "request-id")
 	if !errors.Is(err, ErrUnavailable) || got.ID != 0 {
 		t.Fatalf("returned partial problem: %+v %v", got, err)
+	}
+}
+
+func TestImportPackageCreatesStatementAndDataAtomically(t *testing.T) {
+	f := newServiceFixture(t)
+	dataset := validDataset()
+	input, _ := normalizeInput(validInput())
+	pkg := ProblemPackage{Input: input, Dataset: dataset}
+	f.mock.ExpectBegin()
+	f.mock.ExpectExec("INSERT INTO problems").WithArgs(input.Title, input.Difficulty, "draft", "hidden", snapshotArgument{input}, testAdmin.ID, testNow, testNow).WillReturnResult(sqlmock.NewResult(42, 1))
+	f.mock.ExpectExec("INSERT INTO problem_versions").WithArgs(uint64(42), snapshotArgument{input}, testAdmin.ID, testNow).WillReturnResult(sqlmock.NewResult(0, 1))
+	f.mock.ExpectExec("DELETE FROM problem_tags").WithArgs(uint64(42)).WillReturnResult(sqlmock.NewResult(0, 0))
+	f.mock.ExpectExec("INSERT INTO problem_data_versions").WithArgs(uint64(42), strings.Repeat("a", 32), hex.EncodeToString(dataset.Digest[:]), len(dataset.Cases), dataset.TotalBytes, dataset.TotalScore, testAdmin.ID, testNow).WillReturnResult(sqlmock.NewResult(0, 1))
+	for _, item := range dataset.Cases {
+		f.mock.ExpectExec("INSERT INTO testcases").WithArgs(uint64(42), item.ID, item.Score, len(item.Input), len(item.Output)).WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	f.mock.ExpectExec("UPDATE problems SET statement_version=1").WithArgs(testNow, uint64(42)).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectProblemAudit(f.mock, "problem.package_import").WillReturnResult(sqlmock.NewResult(1, 1))
+	f.mock.ExpectCommit()
+	created, err := f.service.ImportPackage(context.Background(), testAdmin, pkg, "request-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != 42 || created.Revision != 2 || created.StatementVersion != 1 || created.DataVersion != 1 || f.files.calls != 1 {
+		t.Fatalf("unexpected imported problem: %+v store=%+v", created, f.files)
 	}
 }
 

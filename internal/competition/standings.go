@@ -2,6 +2,7 @@ package competition
 
 import (
 	"biue/internal/auth"
+	"biue/internal/markdownsafe"
 	"biue/internal/scoring"
 	"context"
 	"database/sql"
@@ -156,6 +157,20 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 				return v, ErrUnavailable
 			}
 			delete(statement, "checker_source")
+			for _, field := range []string{"description", "input_format", "output_format"} {
+				var source string
+				if raw, ok := statement[field]; ok && json.Unmarshal(raw, &source) == nil {
+					rendered, renderErr := markdownsafe.Render(source, 64<<10)
+					if renderErr != nil {
+						return View{}, ErrUnavailable
+					}
+					encoded, marshalErr := json.Marshal(rendered)
+					if marshalErr != nil {
+						return View{}, ErrUnavailable
+					}
+					statement[field+"_html"] = encoded
+				}
+			}
 			var kind string
 			if json.Unmarshal(statement["problem_type"], &kind) == nil && kind == "output_only" {
 				if err = tx.SelectContext(ctx, &v.Problems[i].OutputCases, `SELECT case_id FROM testcases WHERE problem_id=? AND data_version=? ORDER BY case_id`, v.Problems[i].ID, v.Problems[i].DataVersion); err != nil {
