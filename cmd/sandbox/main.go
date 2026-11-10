@@ -142,7 +142,7 @@ func writeInput(packet sandbox.Input, lang judge.Language, compile bool) error {
 	defer root.Close()
 	var total int64
 	for name, data := range packet.Files {
-		allowed := name == lang.Filename && (compile || lang.ID == "python3") || !compile && (name == "main" && (lang.ID == "cpp17" || lang.ID == "go") || lang.ID == "java" && compiledClass.MatchString(name))
+		allowed := name == lang.Filename && (compile || lang.ID == "python3" || lang.ID == "javascript") || !compile && (name == "main" && (lang.ID == "cpp17" || lang.ID == "go") || lang.ID == "java" && compiledClass.MatchString(name))
 		if !allowed {
 			return os.ErrInvalid
 		}
@@ -164,7 +164,7 @@ func writeInput(packet sandbox.Input, lang judge.Language, compile bool) error {
 			return os.ErrInvalid
 		}
 	}
-	if compile || lang.ID == "python3" {
+	if compile || lang.ID == "python3" || lang.ID == "javascript" {
 		if len(packet.Files) != 1 || len(packet.Files[lang.Filename]) > judge.MaxSourceBytes {
 			return os.ErrInvalid
 		}

@@ -1,6 +1,8 @@
 # 数据库说明
 
-当前构建要求迁移 **8**：新增 contest_freezes 封榜历史与 contest_imports 预览/确认状态；其他历史表保持。预览比较解码后的 JSON，确认、批量状态及快照审计同事务。部署恢复包含会话撤销与系统审计，见 [批次 5](OPERATIONS.md)。
+当前构建要求迁移 **9**：submissions 允许 javascript/text，global_board_cache 主键为 `(kind,period)`，rejudge_requests 以 `(actor_id,request_key)` 保存幂等回执。题型/判题器位于不可变题面快照，公开读取剔除源码；迁移回退拒绝已有扩展快照或语言提交，见 [批次 6](EXTENSIONS.md)。
+
+迁移 **8**：新增 contest_freezes 封榜历史与 contest_imports 预览/确认状态；其他历史表保持。预览比较解码后的 JSON，确认、批量状态及快照审计同事务。部署恢复包含会话撤销与系统审计，见 [批次 5](OPERATIONS.md)。
 
 迁移 7。新增 community_documents、problem_list_items、problem_list_favorites、discussion_likes、community_write_limits、global_board_cache；内容使用 revision 和软删除，收藏/点赞以 `(document_id,user_id)` 唯一键防重。三榜缓存可从权威事实重建，身份关联和结算会使缓存失效。口径和验收见 [批次 4](COMMUNITY.md)。下文迁移 6 段落保留为此前版本说明。
 

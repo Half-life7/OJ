@@ -238,6 +238,7 @@
     const defaults = { title: "", description: "", input_format: "", output_format: "", sample_input: "", sample_output: "", time_limit_ms: 1000, memory_limit_mb: 256, difficulty: "medium", status: "draft", visibility: "hidden" };
     for (const field of editorFields) editor.elements.namedItem(field).value = problem ? problem[field] : defaults[field];
     editor.elements.namedItem("tags").value = problem ? (problem.tags || []).join(", ") : "";
+      for (const field of ["problem_type","checker_mode","checker_source"]) {const input=editor.elements.namedItem(field);if(input)input.value=problem?.[field]||(field==="problem_type"?"programming":field==="checker_mode"?"tokens":"");}
     byID("problem-editor-mode").textContent = problem ? "EDIT PROBLEM #" + problem.id : "NEW PROBLEM";
     byID("problem-editor-heading").textContent = problem ? "编辑题目" : "创建题目";
     byID("problem-editor-version").textContent = problem ? "修订 " + problem.revision + " · 题面版本 " + problem.statement_version + " · 更新于 " + date(problem.updated_at) : "新题默认为隐藏草稿。";

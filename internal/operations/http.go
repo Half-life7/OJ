@@ -4,6 +4,7 @@ import (
 	"biue/internal/auth"
 	"biue/internal/httpx"
 	"biue/internal/judge"
+	"biue/internal/server"
 	"biue/internal/submission"
 	"context"
 	"errors"
@@ -39,6 +40,9 @@ func reply(c *gin.Context, v any, e error) {
 		case errors.Is(e, ErrConflict), errors.Is(e, judge.ErrAdminConflict):
 			status = 409
 			message = "状态已发生变化，请刷新"
+		case errors.Is(e, judge.ErrAdminCapacity):
+			status = 503
+			message = "队列容量不足，请稍后重试"
 		}
 		c.Abort()
 	}
@@ -91,6 +95,16 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 			return
 		}
 		v, e := h.s.Users(c.Request.Context(), actor(c), after, c.Query("q"))
+		reply(c, v, e)
+	})
+	g.POST("/rejudge", func(c *gin.Context) {
+		var in judge.RejudgeInput
+		if e := c.ShouldBindWith(&in, httpx.JSONBinding{MaxBytes: 64 << 10}); e != nil {
+			reply(c, nil, ErrInvalid)
+			return
+		}
+		in.RequestID = server.RequestID(c.Request.Context())
+		v, e := h.s.judge.Rejudge(c.Request.Context(), actor(c).ID, in)
 		reply(c, v, e)
 	})
 	g.POST("/users/:id/status", func(c *gin.Context) {

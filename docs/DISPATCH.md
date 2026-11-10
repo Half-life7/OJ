@@ -4,7 +4,7 @@
 
 ## 运行
 
-按 README 为进程注入环境变量，备份后先运行 `go run ./cmd/ojctl migrate up` 至当前版本 8，再在独立终端运行：
+按 README 为进程注入环境变量，备份后先运行 `go run ./cmd/ojctl migrate up` 至当前版本 9，再在独立终端运行：
 
 ```text
 go run ./cmd/dispatcher

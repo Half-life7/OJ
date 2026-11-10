@@ -1,0 +1,8 @@
+FROM biue-deploy-test:0.1.0
+RUN install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod 0644 /etc/apt/keyrings/docker.asc \
+    && printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable\n' > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["sleep", "infinity"]

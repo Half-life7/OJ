@@ -37,9 +37,25 @@ type Request struct {
 	MemoryLimitMB int64        `json:"memory_limit_mb"`
 	Cases         []Case       `json:"cases,omitempty"`
 	Stdin         []byte       `json:"stdin,omitempty"`
+	ProblemType   string       `json:"problem_type,omitempty"`
+	CheckerMode   string       `json:"checker_mode,omitempty"`
+	CheckerSource string       `json:"checker_source,omitempty"`
 }
 
 func (r Request) Validate() error {
+	if ValidateJudging(r.ProblemType, r.CheckerMode, r.CheckerSource) != nil {
+		return ErrInvalidRequest
+	}
+	if r.ProblemType == "output_only" {
+		if r.Kind != Submit || r.Language != "text" {
+			return ErrInvalidRequest
+		}
+		if _, e := ParseOutputs(r.SourceCode); e != nil {
+			return e
+		}
+	} else if r.Language == "text" {
+		return ErrInvalidRequest
+	}
 	if r.Task.Validate() != nil || !ValidKind(r.Kind) || !utf8.ValidString(r.SourceCode) || len(r.SourceCode) == 0 || len(r.SourceCode) > MaxSourceBytes || r.TimeLimitMS < 1 || r.TimeLimitMS > 60000 || r.MemoryLimitMB < 16 || r.MemoryLimitMB > 4096 {
 		return ErrInvalidRequest
 	}
@@ -56,13 +72,18 @@ func (r Request) Validate() error {
 		return ErrInvalidRequest
 	}
 	seen := make(map[string]bool, len(r.Cases))
+	exact := map[string]bool{}
 	var totalBytes, totalScore int64
 	for _, c := range r.Cases {
+		if r.CheckerMode == "spj" && len(c.Input)+len(c.Expected) > 4<<20 {
+			return ErrInvalidRequest
+		}
 		fold := strings.ToLower(c.ID)
 		if !caseID.MatchString(c.ID) || seen[fold] || len(c.Input) > MaxCaseBytes || len(c.Expected) > MaxCaseBytes || c.Score < 0 || c.Score > math.MaxInt64-totalScore {
 			return ErrInvalidRequest
 		}
 		seen[fold] = true
+		exact[c.ID] = true
 		totalBytes += int64(len(c.Input)) + int64(len(c.Expected))
 		totalScore += c.Score
 		if totalBytes > MaxDatasetBytes {
@@ -71,6 +92,17 @@ func (r Request) Validate() error {
 	}
 	if totalScore == 0 {
 		return ErrInvalidRequest
+	}
+	if r.ProblemType == "output_only" {
+		outputs, e := ParseOutputs(r.SourceCode)
+		if e != nil {
+			return e
+		}
+		for id := range outputs {
+			if !exact[id] {
+				return ErrInvalidRequest
+			}
+		}
 	}
 	return nil
 }

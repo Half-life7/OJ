@@ -29,7 +29,7 @@ import (
 var ErrSandbox = errors.New("sandbox operation failed")
 var identifier = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
-var languageImages = map[string]string{"cpp17": "biue-lang-cpp17:0.1.0", "go": "biue-lang-go:0.1.0", "python3": "biue-lang-python3:0.1.0", "java": "biue-lang-java:0.1.0"}
+var languageImages = map[string]string{"cpp17": "biue-lang-cpp17:0.1.0", "go": "biue-lang-go:0.1.0", "python3": "biue-lang-python3:0.1.0", "java": "biue-lang-java:0.1.0", "javascript": "biue-lang-javascript:0.1.0"}
 
 type Docker struct {
 	client      *http.Client

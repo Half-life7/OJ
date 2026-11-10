@@ -24,6 +24,7 @@ type Team struct {
 	Created time.Time `db:"created_at" json:"created_at"`
 }
 type ProblemView struct {
+	OutputCases      []string        `json:"output_cases,omitempty" db:"-"`
 	ID               uint64          `db:"problem_id" json:"problem_id"`
 	StatementVersion uint64          `db:"statement_version" json:"statement_version"`
 	DataVersion      uint64          `db:"data_version" json:"data_version"`
@@ -148,6 +149,23 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 	if manager || !s.now().Before(c.Start) {
 		if err = tx.SelectContext(ctx, &v.Problems, `SELECT cp.problem_id,cp.statement_version,cp.data_version,pv.snapshot_json FROM contest_problems cp JOIN problem_versions pv ON pv.problem_id=cp.problem_id AND pv.version=cp.statement_version WHERE cp.contest_id=? ORDER BY cp.problem_id`, id); err != nil {
 			return v, ErrUnavailable
+		}
+		for i := range v.Problems {
+			var statement map[string]json.RawMessage
+			if json.Unmarshal(v.Problems[i].Statement, &statement) != nil {
+				return v, ErrUnavailable
+			}
+			delete(statement, "checker_source")
+			var kind string
+			if json.Unmarshal(statement["problem_type"], &kind) == nil && kind == "output_only" {
+				if err = tx.SelectContext(ctx, &v.Problems[i].OutputCases, `SELECT case_id FROM testcases WHERE problem_id=? AND data_version=? ORDER BY case_id`, v.Problems[i].ID, v.Problems[i].DataVersion); err != nil {
+					return v, ErrUnavailable
+				}
+			}
+			v.Problems[i].Statement, err = json.Marshal(statement)
+			if err != nil {
+				return v, ErrUnavailable
+			}
 		}
 	}
 	{

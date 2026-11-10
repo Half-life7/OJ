@@ -60,6 +60,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	})
 	r.GET("/api/submissions", h.requireAccount, h.list)
 	r.GET("/api/submissions/:id", h.requireAccount, h.get)
+	r.GET("/api/submissions/:id/events", h.requireAccount, h.events)
 	r.POST("/api/submissions", h.requireAccount, h.create(string(judge.Submit)))
 	r.POST("/api/runs", h.requireAccount, h.create(string(judge.Run)))
 }

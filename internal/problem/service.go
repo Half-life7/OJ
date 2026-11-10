@@ -10,11 +10,13 @@ import (
 	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"biue/internal/judge"
 	"biue/internal/testcase"
 
 	"github.com/go-sql-driver/mysql"
@@ -55,6 +57,9 @@ func validText(value string, maxBytes int) bool {
 }
 
 func normalizeInput(input Input) (Input, error) {
+	if judge.ValidateJudging(input.ProblemType, input.CheckerMode, input.CheckerSource) != nil {
+		return Input{}, ErrInvalid
+	}
 	input.Title = strings.TrimSpace(input.Title)
 	if !validText(input.Title, 800) || utf8.RuneCountInString(input.Title) == 0 || utf8.RuneCountInString(input.Title) > 200 || strings.ContainsFunc(input.Title, unicode.IsControl) {
 		return Input{}, ErrInvalid
@@ -175,8 +180,14 @@ func (s *Service) List(ctx context.Context, actor Actor, opts ListOptions) (Page
 		conditions = append(conditions, "p.status = 'published'", "p.visibility = 'public'")
 	}
 	if opts.Query != "" {
-		conditions = append(conditions, "p.title LIKE ? ESCAPE '='")
-		args = append(args, "%"+strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(opts.Query)+"%")
+		like := "%" + strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(opts.Query) + "%"
+		if id, e := strconv.ParseUint(opts.Query, 10, 63); e == nil && id > 0 {
+			conditions = append(conditions, "(p.id = ? OR p.title LIKE ? ESCAPE '=')")
+			args = append(args, id, like)
+		} else {
+			conditions = append(conditions, "p.title LIKE ? ESCAPE '='")
+			args = append(args, like)
+		}
 	}
 	for _, filter := range []struct{ name, value string }{{"difficulty", opts.Difficulty}, {"status", opts.Status}, {"visibility", opts.Visibility}} {
 		if filter.value != "" {
@@ -216,6 +227,9 @@ func (s *Service) List(ctx context.Context, actor Actor, opts ListOptions) (Page
 			return Page{}, err
 		}
 		result.Items = append(result.Items, problem)
+		if !admin(actor) {
+			result.Items[len(result.Items)-1].CheckerSource = ""
+		}
 	}
 	return result, nil
 }
@@ -236,7 +250,16 @@ func (s *Service) Get(ctx context.Context, actor Actor, id uint64) (Problem, err
 	if err != nil {
 		return Problem{}, s.unavailable("get", err)
 	}
-	return decodeProblem(row)
+	result, e := decodeProblem(row)
+	if !admin(actor) {
+		result.CheckerSource = ""
+	}
+	if e == nil && result.ProblemType == "output_only" && result.DataVersion > 0 {
+		if e = s.db.SelectContext(ctx, &result.OutputCases, `SELECT case_id FROM testcases WHERE problem_id=? AND data_version=? ORDER BY case_id`, id, result.DataVersion); e != nil {
+			return Problem{}, s.unavailable("output_case_manifest", e)
+		}
+	}
+	return result, e
 }
 
 func (s *Service) Create(ctx context.Context, actor Actor, input Input, requestID string) (Problem, error) {
@@ -251,7 +274,7 @@ func (s *Service) Create(ctx context.Context, actor Actor, input Input, requestI
 		return Problem{}, err
 	}
 	snapshot, err := json.Marshal(input)
-	if err != nil {
+	if err != nil || len(snapshot) > 256<<10 {
 		return Problem{}, ErrInvalid
 	}
 	tx, err := s.db.BeginTxx(ctx, nil)
@@ -315,8 +338,17 @@ func (s *Service) Update(ctx context.Context, actor Actor, id uint64, input Inpu
 		return Problem{}, ErrConflict
 	}
 	input.Revision = 0
+	if input.CheckerMode == "spj" && row.DataVersion > 0 {
+		var invalid int
+		if e := tx.GetContext(ctx, &invalid, `SELECT COUNT(*) FROM testcases WHERE problem_id=? AND data_version=? AND input_bytes+output_bytes>?`, id, row.DataVersion, 4<<20); e != nil {
+			return Problem{}, s.unavailable("checker_limits", e)
+		}
+		if invalid != 0 {
+			return Problem{}, ErrInvalid
+		}
+	}
 	snapshot, err := json.Marshal(input)
-	if err != nil {
+	if err != nil || len(snapshot) > 256<<10 {
 		return Problem{}, ErrInvalid
 	}
 	now := s.now().UTC().Truncate(time.Microsecond)
@@ -432,6 +464,17 @@ func (s *Service) Import(ctx context.Context, actor Actor, id, revision uint64, 
 	}
 	if row.Revision != revision || row.Revision == math.MaxUint64 || row.DataVersion == math.MaxUint64 || row.StatementVersion == 0 {
 		return DataVersion{}, ErrConflict
+	}
+	var judging Input
+	if json.Unmarshal(row.Snapshot, &judging) != nil {
+		return DataVersion{}, ErrUnavailable
+	}
+	if judging.CheckerMode == "spj" {
+		for _, point := range dataset.Cases {
+			if len(point.Input)+len(point.Output) > 4<<20 {
+				return DataVersion{}, ErrInvalid
+			}
+		}
 	}
 	key, err := s.data.Write(ctx, dataset)
 	if err != nil {

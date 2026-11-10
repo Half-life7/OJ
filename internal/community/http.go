@@ -171,7 +171,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 			response(c, nil, ErrInvalid)
 			return
 		}
-		v, e := h.s.Board(c.Request.Context(), c.Param("kind"), page)
+		v, e := h.s.BoardPeriod(c.Request.Context(), c.Param("kind"), c.DefaultQuery("period", "all"), page)
 		response(c, v, e)
 	})
 }

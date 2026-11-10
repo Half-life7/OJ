@@ -62,8 +62,8 @@ func TestRunAndSubmitRemainDistinctKinds(t *testing.T) {
 
 func TestLanguageRegistryProvidesOnlyFixedSupportedCommands(t *testing.T) {
 	languages := Languages()
-	if len(languages) != 4 {
-		t.Fatalf("expected four supported languages, got %d", len(languages))
+	if len(languages) != 6 {
+		t.Fatalf("expected six language descriptors, got %d", len(languages))
 	}
 	for i, expected := range []struct{ id, filename, mode string }{
 		{"cpp17", "main.cpp", "cpp"}, {"go", "main.go", "go"},

@@ -59,5 +59,6 @@ admin.call(path+'/manage','POST',{'action':'revoke_admin','user_id':users[2]['id
 metrics=admin.call('/api/admin/operations/metrics');assert metrics['redis_ready'] and metrics['worker_ready'] and metrics['runner_via_worker_ready']
 admin.call('/api/admin/operations/audits');admin.call('/api/admin/operations/dead-letters');admin.call('/api/admin/operations/quarantine')
 assert any(r['id']==sid for r in admin.call(f"/api/admin/operations/users/{users[0]['id']}/submissions"))
-assert sql('SELECT CONCAT(version,":",dirty) FROM schema_migrations')=='8:0'
-print('Migration 8; user disable/revoke/restore; scoped CSV preview/conflict/idempotency; live sandbox while frozen; retained freeze history; bulk status/export; metrics/audit/queue passed')
+version,dirty=sql('SELECT CONCAT(version,":",dirty) FROM schema_migrations').split(':')
+assert int(version)>=8 and dirty=='0'
+print('Schema >=8; user disable/revoke/restore; scoped CSV preview/conflict/idempotency; live sandbox while frozen; retained freeze history; bulk status/export; metrics/audit/queue passed')

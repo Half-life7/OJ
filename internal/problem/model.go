@@ -25,6 +25,9 @@ type Actor struct {
 }
 
 type Input struct {
+	ProblemType   string   `json:"problem_type,omitempty"`
+	CheckerMode   string   `json:"checker_mode,omitempty"`
+	CheckerSource string   `json:"checker_source,omitempty"`
 	Title         string   `json:"title"`
 	Description   string   `json:"description"`
 	InputFormat   string   `json:"input_format"`
@@ -41,6 +44,7 @@ type Input struct {
 }
 
 type Problem struct {
+	OutputCases []string `json:"output_cases,omitempty"`
 	Input
 	ID               uint64    `json:"id"`
 	StatementVersion uint64    `json:"statement_version"`

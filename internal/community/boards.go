@@ -17,11 +17,12 @@ type BoardRow struct {
 	Reached  time.Time `db:"reached_at" json:"reached_at"`
 }
 type Board struct {
-	Kind  string     `json:"kind"`
-	Built time.Time  `json:"built_at"`
-	Items []BoardRow `json:"items"`
-	Total int        `json:"total"`
-	Page  int        `json:"page"`
+	Period string     `json:"period"`
+	Kind   string     `json:"kind"`
+	Built  time.Time  `json:"built_at"`
+	Items  []BoardRow `json:"items"`
+	Total  int        `json:"total"`
+	Page   int        `json:"page"`
 }
 
 const eligibleAC = `SELECT DISTINCT pa.person_id,s.problem_id,MIN(s.created_at) AS reached_at FROM submissions s JOIN users u ON u.id=s.user_id JOIN person_accounts pa ON pa.user_id=u.id JOIN submission_results r ON r.submission_id=s.id AND r.generation=s.generation JOIN problems p ON p.id=s.problem_id WHERE u.account_type='permanent' AND u.status='active' AND s.contest_id IS NULL AND s.kind='Submit' AND s.status='Accepted' AND r.status='Accepted' AND p.status='published' AND p.visibility='public' GROUP BY pa.person_id,s.problem_id`
@@ -29,6 +30,9 @@ const eligibleSolutions = `SELECT pa.person_id,d.problem_id,MIN(d.published_at) 
 const eligiblePoints = `SELECT pa.person_id,cp.contest_id,MAX(cp.points) AS points,MAX(c.settled_at) AS reached_at FROM contest_points cp JOIN contests c ON c.id=cp.contest_id JOIN contest_team_members m ON m.contest_id=cp.contest_id AND m.team_id=cp.team_id JOIN person_accounts pa ON pa.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN contest_teams t ON t.id=m.team_id AND t.contest_id=m.contest_id WHERE c.settled_at IS NOT NULL AND t.participant_type='official' AND t.status='active' AND u.account_type='permanent' AND u.status='active' GROUP BY pa.person_id,cp.contest_id`
 
 func boardQuery(kind string) (string, error) {
+	return boardQueryPeriod(kind, "all")
+}
+func boardQueryPeriod(kind, period string) (string, error) {
 	var inner, value string
 	switch kind {
 	case "practice":
@@ -43,7 +47,17 @@ func boardQuery(kind string) (string, error) {
 	default:
 		return "", ErrInvalid
 	}
-	return `SELECT x.person_id,n.username,p.display_name,x.value,x.reached_at FROM (SELECT person_id,` + value + ` AS value,MAX(reached_at) AS reached_at FROM (` + inner + `) facts GROUP BY person_id) x JOIN persons p ON p.id=x.person_id JOIN (SELECT pa.person_id,MIN(u.username) AS username FROM person_accounts pa JOIN users u ON u.id=pa.user_id WHERE u.account_type='permanent' AND u.status='active' GROUP BY pa.person_id) n ON n.person_id=x.person_id ORDER BY x.value DESC,x.reached_at,x.person_id`, nil
+	filter := ""
+	switch period {
+	case "all":
+	case "week":
+		filter = " WHERE reached_at>=UTC_TIMESTAMP(6)-INTERVAL 7 DAY"
+	case "month":
+		filter = " WHERE reached_at>=UTC_TIMESTAMP(6)-INTERVAL 30 DAY"
+	default:
+		return "", ErrInvalid
+	}
+	return `SELECT x.person_id,n.username,p.display_name,x.value,x.reached_at FROM (SELECT person_id,` + value + ` AS value,MAX(reached_at) AS reached_at FROM (` + inner + `) facts` + filter + ` GROUP BY person_id) x JOIN persons p ON p.id=x.person_id JOIN (SELECT pa.person_id,MIN(u.username) AS username FROM person_accounts pa JOIN users u ON u.id=pa.user_id WHERE u.account_type='permanent' AND u.status='active' GROUP BY pa.person_id) n ON n.person_id=x.person_id ORDER BY x.value DESC,x.reached_at,x.person_id`, nil
 }
 func assignRanks(rows []BoardRow) {
 	for i := range rows {
@@ -54,7 +68,10 @@ func assignRanks(rows []BoardRow) {
 	}
 }
 func (s *Service) Board(ctx context.Context, kind string, page int) (Board, error) {
-	q, e := boardQuery(kind)
+	return s.BoardPeriod(ctx, kind, "all", page)
+}
+func (s *Service) BoardPeriod(ctx context.Context, kind, period string, page int) (Board, error) {
+	q, e := boardQueryPeriod(kind, period)
 	if e != nil || page < 1 || page > 100000 {
 		return Board{}, ErrInvalid
 	}
@@ -71,7 +88,7 @@ func (s *Service) Board(ctx context.Context, kind string, page int) (Board, erro
 		Data  []byte    `db:"snapshot_json"`
 		Built time.Time `db:"built_at"`
 	}
-	e = tx.GetContext(ctx, &cache, `SELECT snapshot_json,built_at FROM global_board_cache WHERE kind=? FOR UPDATE`, kind)
+	e = tx.GetContext(ctx, &cache, `SELECT snapshot_json,built_at FROM global_board_cache WHERE kind=? AND period=? FOR UPDATE`, kind, period)
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return Board{}, ErrUnavailable
 	}
@@ -88,11 +105,11 @@ func (s *Service) Board(ctx context.Context, kind string, page int) (Board, erro
 		}
 		assignRanks(rows)
 		cache.Built = now
-		if _, e = tx.ExecContext(ctx, `INSERT INTO global_board_cache(kind,snapshot_json,built_at) VALUES (?,?,?) ON DUPLICATE KEY UPDATE snapshot_json=VALUES(snapshot_json),built_at=VALUES(built_at)`, kind, marshal(rows), now); e != nil {
+		if _, e = tx.ExecContext(ctx, `INSERT INTO global_board_cache(kind,period,snapshot_json,built_at) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE snapshot_json=VALUES(snapshot_json),built_at=VALUES(built_at)`, kind, period, marshal(rows), now); e != nil {
 			return Board{}, ErrUnavailable
 		}
 	}
-	b := Board{Kind: kind, Built: cache.Built, Items: []BoardRow{}, Total: len(rows), Page: page}
+	b := Board{Kind: kind, Period: period, Built: cache.Built, Items: []BoardRow{}, Total: len(rows), Page: page}
 	start := (page - 1) * 50
 	if start < len(rows) {
 		end := min(start+50, len(rows))

@@ -1,6 +1,6 @@
 # Worker 消费、租约、结果与重试（2D）
 
-最新状态：2D 已完成，常驻 `cmd/worker`、独立 Docker Runner、Redis 对账与消息隔离、死信查看/人工重试 CLI 及 Compose 均已通过真实 MySQL/Redis/Linux amd64 验收。当前构建迁移版本为 8（批次 5 交付见 OPERATIONS.md）。运行与验收说明见 [RUNNER.md](RUNNER.md)；以下保留各模块的事务与协议约定。
+最新状态：2D 已完成，常驻 `cmd/worker`、独立 Docker Runner、Redis 对账与消息隔离、死信查看/人工重试 CLI 及 Compose 均已通过真实 MySQL/Redis/Linux amd64 验收。当前构建迁移版本为 9（批次 5 交付见 OPERATIONS.md）。运行与验收说明见 [RUNNER.md](RUNNER.md)；以下保留各模块的事务与协议约定。
 
 ## 第四小批实施约定（已完成，本地验证）
 
@@ -74,7 +74,7 @@ miniredis 验证组创建前消息不丢失、有效期内不抢取、过期消�
 
 ## 执行重试与死信
 
-升级前备份数据库、problem-data 和 runner-data，执行 `go run ./cmd/ojctl migrate up` 至当前版本 8 后再启动新构建。真实数据库迁移是否已运行以 CHANGELOG.md 为准；普通测试仅验证迁移文件链和应用事务。
+升级前备份数据库、problem-data 和 runner-data，执行 `go run ./cmd/ojctl migrate up` 至当前版本 9 后再启动新构建。真实数据库迁移是否已运行以 CHANGELOG.md 为准；普通测试仅验证迁移文件链和应用事务。
 
 `ExecutionStore.Fail(ctx, lease, reason)` 不读取数据卷，也不直接访问 Redis。调用方须在有效租约下停止当前执行，随后记录受控基础设施故障：
 

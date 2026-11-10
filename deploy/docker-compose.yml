@@ -91,6 +91,21 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  lang-javascript:
+    image: biue-lang-javascript:0.1.0
+    build:
+      context: ..
+      dockerfile: deploy/languages/Dockerfile
+      args:
+        LANGUAGE_IMAGE: node:22.23.4-bookworm-slim
+        LANGUAGE_ID: javascript
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   mysql:
     image: mysql:8.0.46
     restart: unless-stopped
@@ -272,6 +287,8 @@ services:
       lang-python3:
         condition: service_completed_successfully
       lang-java:
+        condition: service_completed_successfully
+      lang-javascript:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/app/judge-runner", "--healthcheck"]

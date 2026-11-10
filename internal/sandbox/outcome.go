@@ -1,5 +1,7 @@
 // Package sandbox defines the signed result produced by the immutable sandbox
-// supervisor. Expected answers and database credentials never enter a sandbox.
+// supervisor. Expected answers never enter student-program sandboxes; dedicated
+// administrator-provided checker sandboxes may receive the current answer.
+// Database credentials never enter either type of sandbox.
 package sandbox
 
 import (

@@ -93,6 +93,26 @@
     }
   }
 
+  const eventStreams = new Set();
+  function watchSubmission(id, render, fallback) {
+    if (typeof window.EventSource !== "function") return null;
+    const source = new window.EventSource("/api/submissions/" + encodeURIComponent(id) + "/events", { withCredentials: true });
+    let active = true, sequence = 0;
+    const stream = { close() { active = false; sequence++; source.close(); eventStreams.delete(stream); } };
+    const failed = (revoked = false) => { if (!active || disposed) return; stream.close(); fallback(revoked); };
+    source.addEventListener("snapshot", (event) => {
+      let snapshot; try { snapshot = JSON.parse(event.data); } catch { failed(); return; }
+      if (String(snapshot.id) !== String(id)) { failed(); return; }
+      const current = ++sequence;
+      request("/api/submissions/" + encodeURIComponent(id)).then(record => { if (active && !disposed && current === sequence) render(record); }).catch(error => failed(error.status === 401 || error.status === 403 || error.status === 404));
+    });
+    source.addEventListener("unauthorized", () => failed(true));
+    source.addEventListener("unavailable", () => failed());
+    source.addEventListener("end", () => source.close());
+    source.onerror = () => failed();
+    eventStreams.add(stream); return stream;
+  }
+
   function poller(load, render, ongoing, errorHandler, signature) {
     let timer;
     let controller;
@@ -146,6 +166,7 @@
   window.addEventListener("pagehide", () => {
     disposed = true;
     for (const item of pollers) item.stop();
+    for (const stream of eventStreams) stream.close();
     for (const controller of controllers) controller.abort();
   });
   // A page restored from the back/forward cache must recheck session state
@@ -161,17 +182,26 @@
     let editor;
     let busy = false;
     let activeSubmission;
+    let composerStream = null, composerAttempt = "";
 
     function controls() {
       const allowed = user?.account_type === "permanent";
       byID("submission-fields").disabled = busy || !allowed;
       byID("submit-button").disabled = busy || !allowed || !problem?.data_version;
       byID("run-stdin").disabled = byID("run-use-sample").checked;
+      byID("run-button").disabled=busy||!allowed||problem?.problem_type==="output_only";
       editor?.setDisabled(busy || !allowed);
     }
 
     function renderResult(submission) {
       activeSubmission = submission.id;
+      if (terminal.has(submission.status)) { composerStream?.close(); composerStream = null; }
+      else if (typeof window.EventSource === "function" && composerAttempt !== submission.id + ":" + submission.generation) {
+        composerAttempt = submission.id + ":" + submission.generation;
+        composerStream?.close(); resultPoll.stop();
+        composerStream = watchSubmission(submission.id, renderResult, (revoked) => { composerStream = null; if (revoked) byID("composer-result").hidden = true; resultPoll.start(); });
+      }
+
       byID("composer-result").hidden = false;
       byID("composer-result-link").href = "/submissions/" + encodeURIComponent(submission.id);
       summary(byID("composer-result-summary"), submission);
@@ -210,13 +240,16 @@
         if (disposed) return;
         if (!Array.isArray(languages) || languages.length === 0) throw new APIError("暂时无法读取可用语言，请稍后重试。", 503);
         const select = byID("submission-language");
+        const allowedLanguages = languages.filter(item => problem.problem_type === "output_only" ? item.id === "text" : item.id !== "text");
         const selectedLanguage = select.value;
-        select.replaceChildren(...languages.map((language) => { const option = node("option", language.name || language.id); option.value = language.id; return option; }));
-        select.value = languages.some((language) => language.id === selectedLanguage) ? selectedLanguage : languages[0].id;
+        select.replaceChildren(...allowedLanguages.map((language) => { const option = node("option", language.name || language.id); option.value = language.id; return option; }));
+        select.value = allowedLanguages.some((language) => language.id === selectedLanguage) ? selectedLanguage : allowedLanguages[0].id;
+        const cases=problem.output_cases||[];
+        if(problem.problem_type==="output_only")byID("source-code").placeholder=JSON.stringify(Object.fromEntries(cases.map(id=>[id,""])),null,2);
         user = currentUser;
         if (!editor && typeof window.BiueEditor?.mount === "function") editor = window.BiueEditor.mount(byID("source-code"), select.value);
         byID("composer-login").hidden = !!user;
-        byID("composer-state").textContent = !user ? "登录永久账号后，即可运行自测或正式提交代码。" : user.account_type !== "permanent" ? "当前账号仅用于比赛，日常练习请使用永久账号。" : problem.data_version ? "运行用于自测，正式提交将使用题目的测试数据。" : "本题尚未配置正式测试数据，可以先运行自测。";
+        byID("composer-state").textContent = !user ? "登录永久账号后，即可运行自测或正式提交代码。" : user.account_type !== "permanent" ? "当前账号仅用于比赛，日常练习请使用永久账号。" : problem.data_version ? (problem.problem_type==="output_only"?"输出型：按题面提供的公开任务填写 case_id 到输出的 JSON；测试点标识："+(problem.output_cases||[]).join(", "):"运行用于自测，正式提交将使用题目的测试数据。") : "本题尚未配置正式测试数据，可以先运行自测。";
         controls();
       } catch (error) {
         if (disposed) return;
@@ -330,13 +363,20 @@
   }
 
   const submissionID = window.location.pathname.split("/")[2];
+  let detailStream = null, detailAttempt = "";
   function renderDetail(submission) {
+    if (terminal.has(submission.status)) { detailStream?.close(); detailStream = null; }
+    else if (typeof window.EventSource === "function" && detailAttempt !== submission.id + ":" + submission.generation) {
+      detailAttempt = submission.id + ":" + submission.generation;
+      detailStream?.close(); detailPoll.stop();
+      detailStream = watchSubmission(submission.id, renderDetail, (revoked) => { detailStream = null; if (revoked) {byID("submission-detail").hidden = true; for(const id of ["submission-source","submission-stdin","submission-output","submission-error"])byID(id).textContent="";} detailPoll.start(); });
+    }
     byID("submission-heading").textContent = "提交 #" + submission.id;
     document.title = "提交 #" + submission.id + " · Biue OJ";
     summary(byID("submission-summary"), submission);
     const metadata = byID("submission-metadata");
     metadata.replaceChildren();
-    for (const [label, value] of [["题目", submission.problem_id], ["语言", submission.language], ["题面版本", submission.statement_version], ["数据版本", submission.data_version || "未使用正式数据"], ["提交时间", date(submission.created_at)], ["更新时间", date(submission.updated_at)]]) {
+    for (const [label, value] of [["判题轮次", submission.generation], ["题目", submission.problem_id], ["语言", submission.language], ["题面版本", submission.statement_version], ["数据版本", submission.data_version || "未使用正式数据"], ["提交时间", date(submission.created_at)], ["更新时间", date(submission.updated_at)]]) {
       const row = node("div");
       row.append(node("dt", label), node("dd", value));
       metadata.append(row);

@@ -2,7 +2,7 @@
 
 批次 5 已交付生产内部 TLS、部署/备份恢复和 arm64 自定义镜像构建/仿真启动；当前部署流程和平台待验项见 [运维说明](OPERATIONS.md)。下文保留 2D 协议与历史验收边界。
 
-2D 已包含 Outbox、常驻 Worker、租约/心跳、固定版本请求、四语言 Docker Runner、结果落库后 ACK、执行重试/死信、Redis 对账恢复、消息隔离与死信 CLI。当前构建迁移版本为 **8**（批次 5）。已在 Docker Desktop Linux/amd64、真实 MySQL/Redis 上完成四语言及故障恢复验收，详见 CHANGELOG.md；Linux/arm64 已交叉编译并仿真启动，不能当作原生整机验收。
+2D 已包含 Outbox、常驻 Worker、租约/心跳、固定版本请求、四语言 Docker Runner、结果落库后 ACK、执行重试/死信、Redis 对账恢复、消息隔离与死信 CLI。当前构建迁移版本为 **9**（批次 6）。已在 Docker Desktop Linux/amd64、真实 MySQL/Redis 上完成四语言及故障恢复验收，详见 CHANGELOG.md；Linux/arm64 已交叉编译并仿真启动，不能当作原生整机验收。
 
 ## 运行与部署
 
@@ -64,7 +64,7 @@ Web、Worker、dispatcher、migrate 均无 Docker Socket。Runner 使用独立 j
 
 ## 沙箱边界与判题规则
 
-一次编译使用独立容器；每个测试点使用全新容器。Python 跳过编译；Java 要求默认包中的 Main 类。编译后仅导出 main 或受控默认包 .class 文件，拒绝链接/危险路径，产物最多 16 MiB、256 项。缺失或超预算产物按 CompileError 处理。
+一次编译使用独立容器；每个测试点使用全新容器。Python/JavaScript 跳过编译；Java 要求默认包中的 Main 类。编译后仅导出 main 或受控默认包 .class 文件，拒绝链接/危险路径，产物最多 16 MiB、256 项。缺失或超预算产物按 CompileError 处理。
 
 | 资源 | 限制 |
 | --- | --- |
@@ -79,11 +79,11 @@ Web、Worker、dispatcher、migrate 均无 Docker Socket。Runner 使用独立 j
 
 不可变监督程序通过 Docker attached stdin 接收有界文件包，写入自身活跃 tmpfs；结果与编译产物经签名 stdout 返回。没有依赖 Docker archive API 将文件拷入 tmpfs（该路径在真实运行中存在挂载可见性差异）。Docker 容器日志关闭，避免额外持久化编译产物和运行输出。
 
-监督程序使用固定命令，捕获输出、墙钟时间及 Linux wait 的子进程峰值 RSS。它关闭 dumpable，阻止同 UID 代码读取监督程序的 environ/内存/fd；子进程环境不含签名密钥。结果用每容器随机 HMAC 密钥签名，Runner 验证后才接受，提交代码不能通过输出伪造控制记录。隐藏答案从不进入沙箱，只在 Runner 外部比较。
+监督程序使用固定命令，捕获输出、墙钟时间及 Linux wait 的子进程峰值 RSS。它关闭 dumpable，阻止同 UID 代码读取监督程序的 environ/内存/fd；子进程环境不含签名密钥。结果用每容器随机 HMAC 密钥签名，Runner 验证后才接受，提交代码不能通过输出伪造控制记录。隐藏答案不进入选手沙箱；tokens 比较在 Runner 内完成，批次 6 的专用 SPJ 沙箱仅接收当前点答案。判题器输出和诊断不会传给选手。
 
 OOM 通过 Docker 状态/事件确认，事件接口使用数字 Unix 秒/纳秒时间戳并容忍通知的短暂延迟；普通 SIGKILL 不直接当作内存超限，Java OutOfMemoryError 也归为 MLE。没有可测子进程内存的 OOM 路径标记为未测量并保存零值，避免虚构资源统计。容器内存限制包含监督程序开销，报告值为用户子进程峰值 RSS。上述限制已通过本次 Linux/amd64 实际验收。
 
-默认比较器按 ASCII 空白分隔 token 精确比较，不提供浮点容差或 Special Judge。Submit 运行全部测试点，逐点给分，汇总首个失败状态及最大时间/内存；程序输出、隐藏输入/答案不写入对外结果。Run 使用自己的输入，不与隐藏答案比较且永远零分。编译诊断会有界转为合法 UTF-8。
+默认比较器仍按 ASCII 空白分隔 token 精确比较；可配置隔离 Python Special Judge 实现自定义规则，详见 [批次 6](EXTENSIONS.md)。Submit 运行全部测试点，逐点给分，汇总首个失败状态及最大时间/内存；程序输出、隐藏输入/答案不写入对外结果。Run 使用自己的输入，不与隐藏答案比较且永远零分。编译诊断会有界转为合法 UTF-8。
 
 ## Redis 恢复与人工处理
 

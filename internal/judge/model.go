@@ -109,6 +109,8 @@ var languageRegistry = [...]Language{
 		Compile: []string{"javac", "-encoding", "UTF-8", "Main.java"},
 		Execute: []string{"java", "-XX:+UseSerialGC", "-XX:ActiveProcessorCount=1", "-XX:MaxRAMPercentage=60", "-Xss512k", "Main"},
 	},
+	{ID: "javascript", Name: "JavaScript (Node.js 22)", Filename: "main.js", EditorMode: "javascript", Execute: []string{"node", "--max-old-space-size=128", "main.js"}},
+	{ID: "text", Name: "输出文件 JSON", Filename: "outputs.json", EditorMode: "json"},
 }
 
 // Languages returns the supported languages in a stable display order. Every

@@ -62,14 +62,20 @@ func (s *ExecutionStore) LoadRequest(ctx context.Context, lease Lease) (Request,
 		return Request{}, ErrExecutionStore
 	}
 	var limits struct {
-		Time   int64 `json:"time_limit_ms"`
-		Memory int64 `json:"memory_limit_mb"`
+		Time          int64  `json:"time_limit_ms"`
+		Memory        int64  `json:"memory_limit_mb"`
+		ProblemType   string `json:"problem_type"`
+		CheckerMode   string `json:"checker_mode"`
+		CheckerSource string `json:"checker_source"`
 	}
 	if len(row.Snapshot) > 256<<10 || json.Unmarshal(row.Snapshot, &limits) != nil {
 		return Request{}, ErrExecutionStore
 	}
 	r := Request{Task: lease.Task, Kind: row.Kind, Language: row.Language, SourceCode: row.Source, TimeLimitMS: limits.Time, MemoryLimitMB: limits.Memory}
+	r.ProblemType, r.CheckerMode, r.CheckerSource = limits.ProblemType, limits.CheckerMode, limits.CheckerSource
 	if row.Kind == Run {
+		r.CheckerMode = ""
+		r.CheckerSource = ""
 		if row.TotalCases != 1 {
 			return Request{}, ErrExecutionStore
 		}

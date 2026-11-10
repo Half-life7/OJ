@@ -29,7 +29,7 @@
   }
   if (page === "rankings") {
     let current = 1;
-    async function load() { const b = await api(`/api/leaderboards/${byID("board-form").elements.kind.value}?page=${current}`); if (disposed) return; byID("board-rows").replaceChildren(); for (const r of b.items) { const tr = element("tr"); for (const value of [r.rank, r.username, r.display_name, r.value, new Date(r.reached_at).toLocaleString()]) tr.append(element("td", value)); byID("board-rows").append(tr); } byID("board-meta").textContent = `${b.total} 位参与者 · 第 ${current} 页 · ${new Date(b.built_at).toLocaleString()} 更新`; byID("board-prev").disabled = current === 1; byID("board-next").disabled = current * 50 >= b.total; }
+    async function load() { const b = await api(`/api/leaderboards/${byID("board-form").elements.kind.value}?page=${current}&period=${byID("board-form").elements.period.value}`); if (disposed) return; byID("board-rows").replaceChildren(); for (const r of b.items) { const tr = element("tr"); for (const value of [r.rank, r.username, r.display_name, r.value, new Date(r.reached_at).toLocaleString()]) tr.append(element("td", value)); byID("board-rows").append(tr); } byID("board-meta").textContent = `${b.total} 位参与者 · 第 ${current} 页 · ${new Date(b.built_at).toLocaleString()} 更新`; byID("board-prev").disabled = current === 1; byID("board-next").disabled = current * 50 >= b.total; }
     byID("board-form").onsubmit = e => { e.preventDefault(); current = 1; run(e.submitter, load); };
     byID("board-prev").onclick = e => run(e.target, () => { current = Math.max(1, current - 1); return load(); });
     byID("board-next").onclick = e => run(e.target, () => { current++; return load(); });

@@ -3,6 +3,8 @@ package judge_runner
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -20,6 +22,23 @@ func (d *Docker) Judge(ctx context.Context, r judge.Request, emit func(judge.Sta
 		return result, ErrSandbox
 	}
 	language, _ := judge.LookupLanguage(r.Language)
+	var outputs map[string]string
+	if r.ProblemType == "output_only" {
+		var err error
+		outputs, err = judge.ParseOutputs(r.SourceCode)
+		if err != nil {
+			return result, ErrSandbox
+		}
+		allowed := map[string]bool{}
+		for _, c := range r.Cases {
+			allowed[c.ID] = true
+		}
+		for id := range outputs {
+			if !allowed[id] {
+				return result, ErrSandbox
+			}
+		}
+	}
 	files := map[string][]byte{language.Filename: []byte(r.SourceCode)}
 	if len(language.Compile) > 0 {
 		if err := emit(judge.Compiling); err != nil {
@@ -66,13 +85,41 @@ func (d *Docker) Judge(ctx context.Context, r judge.Request, emit func(judge.Sta
 	}
 	result.MemoryMeasured = true
 	for _, c := range r.Cases {
-		out, _, err := d.runSandbox(ctx, r, false, files, c.Input)
+		var out sandbox.Outcome
+		var err error
+		if outputs != nil {
+			value, ok := outputs[c.ID]
+			out.Stdout = []byte(value)
+			out.MemoryMeasured = true
+			if !ok {
+				out.ExitCode = 1
+			}
+		} else {
+			out, _, err = d.runSandbox(ctx, r, false, files, c.Input)
+		}
 		if err != nil {
 			return result, err
 		}
 		status := verdict(out)
-		if status == judge.Accepted && !equalTokens(out.Stdout, c.Expected) {
+		if outputs != nil && out.ExitCode != 0 {
 			status = judge.WrongAnswer
+		}
+		if status == judge.Accepted {
+			if r.CheckerMode == "spj" {
+				if len(out.Stdout) > 4<<20 {
+					status = judge.RuntimeError
+				} else {
+					ok, e := d.check(ctx, r, c, out.Stdout)
+					if e != nil {
+						return result, e
+					}
+					if !ok {
+						status = judge.WrongAnswer
+					}
+				}
+			} else if !equalTokens(out.Stdout, c.Expected) {
+				status = judge.WrongAnswer
+			}
 		}
 		point := judge.CaseResult{ID: c.ID, Status: status, ExecutionTimeMS: out.TimeMS, MemoryUsageKB: out.MemoryKB, MemoryMeasured: out.MemoryMeasured}
 		if status == judge.Accepted {
@@ -95,6 +142,40 @@ func (d *Docker) Judge(ctx context.Context, r judge.Request, emit func(judge.Sta
 		}
 	}
 	return result, nil
+}
+
+// The checker runs in a separate fixed Python sandbox. Only this sandbox gets
+// the expected answer; neither output nor diagnostics are returned to users.
+func (d *Docker) check(ctx context.Context, r judge.Request, c judge.Case, output []byte) (bool, error) {
+	packet, e := checkerPacket(c, output)
+	if e != nil || len(packet) > judge.MaxCaseBytes {
+		return false, ErrSandbox
+	}
+	checker := r
+	checker.Kind = judge.Run
+	checker.Language = "python3"
+	checker.TimeLimitMS = 1000
+	checker.MemoryLimitMB = 256
+	out, _, e := d.runSandbox(ctx, checker, false, map[string][]byte{"main.py": []byte(r.CheckerSource)}, packet)
+	if e != nil || verdict(out) != judge.Accepted {
+		return false, ErrSandbox
+	}
+	switch strings.TrimSpace(string(out.Stdout)) {
+	case "AC":
+		return true, nil
+	case "WA":
+		return false, nil
+	default:
+		return false, ErrSandbox
+	}
+}
+
+func checkerPacket(c judge.Case, output []byte) ([]byte, error) {
+	return json.Marshal(struct {
+		Input    string `json:"input"`
+		Expected string `json:"expected"`
+		Output   string `json:"output"`
+	}{base64.StdEncoding.EncodeToString(c.Input), base64.StdEncoding.EncodeToString(c.Expected), base64.StdEncoding.EncodeToString(output)})
 }
 
 func safeText(raw []byte, limit int) string {

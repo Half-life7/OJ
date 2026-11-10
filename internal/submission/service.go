@@ -128,6 +128,36 @@ func (s *Service) Create(ctx context.Context, actor Actor, kind string, input Cr
 	if problem.StatementVersion == 0 || problem.ID != input.ProblemID {
 		return Submission{}, s.unavailable("problem_version")
 	}
+	var judging struct {
+		Type string `json:"problem_type"`
+	}
+	if json.Unmarshal(problem.Snapshot, &judging) != nil {
+		return Submission{}, s.unavailable("judging_snapshot")
+	}
+	if judging.Type == "output_only" {
+		if kind != "Submit" || input.Language != "text" {
+			return Submission{}, ErrInvalid
+		}
+		outputs, e := judge.ParseOutputs(input.SourceCode)
+		if e != nil {
+			return Submission{}, ErrInvalid
+		}
+		var ids []string
+		if e = tx.SelectContext(ctx, &ids, `SELECT case_id FROM testcases WHERE problem_id=? AND data_version=?`, input.ProblemID, problem.DataVersion); e != nil {
+			return Submission{}, s.unavailable("output_case_ids")
+		}
+		allowed := map[string]bool{}
+		for _, id := range ids {
+			allowed[id] = true
+		}
+		for id := range outputs {
+			if !allowed[id] {
+				return Submission{}, ErrInvalid
+			}
+		}
+	} else if input.Language == "text" {
+		return Submission{}, ErrInvalid
+	}
 	if kind == "Submit" && problem.DataVersion == 0 {
 		return Submission{}, ErrNoData
 	}
