@@ -15,7 +15,7 @@
 
 ## 规则与事务边界
 
-- 比赛时间采用 UTC，参赛窗口为 `[starts_at, ends_at)`；开始后锁定模式、题目版本及队伍成员。个人赛一人一队，团队赛由管理员管理成员。
+- 比赛时间采用 UTC，参赛窗口为 `[starts_at, ends_at)`；开始后锁定计分模式、已有题目快照和团队模式。管理员仍可在比赛结束前应急追加题目、补录队伍或创建临时账号；每次操作继续使用权限检查、审计和当时固定的题面/数据版本。个人赛一人一队，团队赛由管理员管理成员。
 - 学号审核、纠错和清除保存历史与审计；身份关联必须显式操作，历史参赛身份快照不随当前身份修改。
 - 普通账号只能自由报名 open 比赛；admin_add 只允许被授权管理员添加。无学号不影响报名。待审核、退赛或不属于该比赛的账号不能提交。
 - 比赛题目固定题面和数据版本，提交记录持有比赛与队伍 ID。所有提交继续使用现有准入锁、Outbox、Worker 和 Runner。
@@ -31,7 +31,7 @@
 
 页面：`/contests`、`/contests/:id`、`/admin/identities`。比赛中心列表按编号从新到旧加载，“加载更多”继续读取更旧比赛；每项直接显示赛前、进行中、已结束或已结算，无需进入详情才能辨认。进入详情后使用左侧功能区切换概览、题目、名单与成绩、单题答题、本人身份以及管理员操作。详情响应使用请求代次，迟到的旧比赛响应不会覆盖当前标题或写操作目标。CSV 预览绑定当前比赛和当前文本，切换比赛或修改 CSV 后立即失效。身份列表同时展示关联账号 ID 和数字编号。
 
-“比赛题目”保留一镜到底题面，并在顶部显示答题卡：本人个人赛或所属团队有正式 Submit 的题目标记“已写”，有 AC 标记“通过”，其余为“未写”；Run 不改变状态。点击答题卡、题目卡入口或题目下拉后进入单题答题工作区，桌面左侧为固定版本题面和样例、右侧为代码编辑器，可前后切题或返回一镜到底。比赛结束后仍可阅读，但提交按钮显示结束提示。详情响应的 `problem_attempts` 按本人所属队伍给出各题正式 Submit 次数，已结算旧快照也能据此恢复答题卡状态。
+“比赛题库”是查看完整题面的入口，进入后显示题目列表和答题卡：本人个人赛或所属团队有正式 Submit 的题目标记“已写”，有 AC 标记“通过”，其余为“未写”；Run 不改变状态。点击答题卡、题目卡入口或题目下拉后进入单题答题工作区，桌面左侧为固定版本题面和样例、右侧为大尺寸代码编辑器，可前后切题或返回比赛题库。比赛结束后仍可阅读，但提交按钮显示结束提示。详情响应的 `problem_attempts` 按本人所属队伍给出各题正式 Submit 次数，已结算旧快照也能据此恢复答题卡状态。
 
 以下接口均需有效会话，写接口沿用全站 Origin/CSRF 防护，JSON 上限 64 KiB；越权返回 403，状态/唯一性冲突返回 409，内部错误隐藏为 503。比赛提交另沿用原有 Run/Submit 限流。
 
@@ -42,14 +42,14 @@
 | GET | `/api/contests/:id/manage-options?q=` | 授权管理员按名称/编号搜索可绑定题目，并按账号、姓名或学号搜索人员及现有比赛管理员 |
 | POST | `/api/contests/:id/enroll` | 永久账号自由报名个人赛 |
 | POST | `/api/contests/:id/manage` | 授权管理员管理题目、队伍、状态；超级管理员授予/撤销比赛管理员 |
-| POST | `/api/contests/:id/temporary-accounts` | 管理员创建临时账号并加入比赛，密码不进入审计 |
+| POST | `/api/contests/:id/temporary-accounts` | 管理员创建临时账号并加入比赛；username/display_name/password 必填，student_no/organization 可选且用于身份合并；密码不进入审计 |
 | GET | `/api/contests/:id/submissions` | 本人或授权管理员查看成员提交；支持 user_id、after，每页最多 100 条 |
 | POST | `/api/contests/:id/settle` | 授权管理员幂等结算 |
 | GET | `/api/admin/persons` | 超级管理员游标读取身份及关联账号 |
 | PUT | `/api/admin/persons/:id` | revision、显示名、学号/审核状态、组织及必填 reason |
 | POST | `/api/admin/identity-links` | user_id、from_person_id、to_person_id、reason，显式关联 |
 
-manage 的 action：`add_problem` / `remove_problem`、`add_team`（name、members 数字账号 ID 数组、participant_type）、`team_status`（team_id、status、participant_type）、`grant_admin` / `revoke_admin`（user_id）、`retire_account`（赛后临时账号）。赛前可以增减题目并绑定当时版本，开始后固定。团队赛通过管理员提交成员列表建立，多账号对应同一 person 时拒绝重复入场。
+manage 的 action：`add_problem` / `remove_problem`、`add_team`（name、members 数字账号 ID 数组、participant_type）、`team_status`（team_id、status、participant_type）、`grant_admin` / `revoke_admin`（user_id）、`retire_account`（赛后临时账号）。`add_problem` 和 `add_team` 可在比赛结束前应急执行，前者固定执行当时的题面与数据版本；`remove_problem` 仍只允许赛前。团队赛通过管理员提交成员列表建立，多账号对应同一 person 时拒绝重复入场。
 
 管理页按动作只展示相关字段，题目和人员选择结果显示名称、编号及固定题面/数据版本；批量状态、移除题目、封榜和结算等操作展示作用比赛并二次确认。当前没有比赛管理权限、比赛已开始、已结束或已结算时，服务端仍独立拒绝不允许的变更。
 
@@ -63,7 +63,9 @@ manage 的 action：`add_problem` / `remove_problem`、`add_team`（name、membe
 
 开始后计分模式和个人/团队模式锁定，前端禁用并说明原因；普通标题、报名配置和时间仍可应急修正。已将结束时间提前/延长的比赛可继续修正；已结束比赛若延长，新结束时间必须晚于服务器当前时间。时间变化仍须满足结束晚于开始且总历时不超过 30 天，revision 冲突返回 409，已结算比赛拒绝设置修改。
 
-CSV 导入接受 `username/账号/用户名`、`display_name/姓名`、`student_no/学号`、`organization/学校/组织`、`team/队伍/队名`、`participant_type/选手类型` 等别名。预览返回规范化列映射，未知列和重复映射拒绝；页面同时给出每一列的中文说明和示例。
+CSV 导入接受 `username/账号/用户名`、`display_name/姓名`、`student_no/学号`、`organization/学校/组织`、`team/队伍/队名`、`participant_type/选手类型` 等别名。预览返回规范化列映射，未知列和重复映射拒绝；页面同时给出每一列的中文说明和示例。CSV 中不存在永久账号的选手会创建比赛临时账号：新账号必须有姓名和学号，学号已对应 person 时直接关联该身份，否则创建 verified person。预览生成一次性随机初始密码，数据库只保存 bcrypt 哈希和名单字段；管理员应在确认前复制或保存密码。比赛结束前可预览/确认，结束后拒绝。
+
+超级管理员在比赛工作区“题包导入”中可上传同结构 ZIP 或预览内置 A+B 题包。确认先在题目模块原子导入题包，再将其发布为 `contest_only` 并固定到当前比赛；若发布或绑定失败，页面明确显示已导入的题目编号，需在题目管理中处理后重试。通用题包接口仍只允许永久超级管理员。
 
 ## 复现命令
 

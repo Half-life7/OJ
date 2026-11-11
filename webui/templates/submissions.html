@@ -5,7 +5,7 @@
   <a id="composer-login" href="/login" class="button secondary" hidden>登录后运行或提交</a><button id="composer-retry" type="button" class="button secondary" hidden>重新加载</button>
   <form id="submission-form"><fieldset id="submission-fields" disabled>
     <label for="submission-language">语言</label><select id="submission-language" name="language" required></select>
-    <label for="source-code">源代码</label><textarea id="source-code" name="source_code" class="source-code" rows="15" required spellcheck="false" aria-describedby="source-help"></textarea><p id="source-help" class="field-help">最多 64 KiB。运行用于自测，正式提交使用本题测试数据。</p>
+    <div class="editor-field"><label for="source-code">源代码</label><textarea id="source-code" name="source_code" class="source-code" rows="24" required spellcheck="false" aria-describedby="source-help"></textarea></div><p id="source-help" class="field-help">最多 64 KiB。支持语法高亮、行号、字典补全、查找、撤销、注释和全屏放大；运行用于自测，正式提交使用本题测试数据。</p>
     <label class="checkbox-label" for="run-use-sample"><input id="run-use-sample" type="checkbox" checked>运行时使用题目样例输入</label>
     <div class="run-io-grid">
       <div><label for="run-stdin">自测输入</label><textarea id="run-stdin" name="stdin" rows="7" spellcheck="false" disabled aria-describedby="run-input-help"></textarea><p id="run-input-help" class="field-help">默认显示题目样例；取消勾选后可编辑，最多 64 KiB。</p></div>

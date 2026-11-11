@@ -57,6 +57,7 @@ function boot(pathname, respond) {
   }
   const calls = [];
   const location = { pathname, search: "" };
+  let intervalCallback = null;
   const document = {
     body: { dataset: { page: "rankings" } },
     hidden: false,
@@ -67,7 +68,7 @@ function boot(pathname, respond) {
   const window = {
     location,
     addEventListener() {},
-    setInterval: () => 1,
+    setInterval: (callback) => { intervalCallback = callback; return 1; },
     clearInterval() {},
   };
   vm.runInNewContext(script, {
@@ -84,7 +85,7 @@ function boot(pathname, respond) {
       };
     },
   }, { filename: "community.js" });
-  return { elements, calls };
+  return { elements, calls, refresh() { return intervalCallback?.(); } };
 }
 
 async function settle() {
@@ -119,4 +120,26 @@ test("contest ranking detail uses student number and participation columns", asy
   assert.equal(ui.elements.get("ranking-overview").hidden, true);
   assert.match(ui.elements.get("board-rows").textContent, /S0011884/);
   assert.match(ui.elements.get("board-meta").textContent, /1 位参与者/);
+});
+
+test("ranking overview ignores a slow response from an older refresh", async () => {
+  let practiceCalls = 0;
+  const ui = boot("/rankings", async (url) => {
+    if (url.includes("/leaderboards/practice")) {
+      practiceCalls++;
+      if (practiceCalls === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return board("practice", { rank: 1, username: "old", display_name: "Old result", value: 1 });
+      }
+      return board("practice", { rank: 1, username: "new", display_name: "New result", value: 9 });
+    }
+    if (url.includes("/leaderboards/contest")) return board("contest", { rank: 1, username: "c", display_name: "Contest", value: 1, participations: 1 });
+    if (url.includes("/leaderboards/solutions")) return board("solutions", { rank: 1, username: "s", display_name: "Solution", value: 1 });
+    throw new Error(`unexpected ${url}`);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await ui.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.match(ui.elements.get("ranking-preview-practice").textContent, /New result/);
+  assert.doesNotMatch(ui.elements.get("ranking-preview-practice").textContent, /Old result/);
 });

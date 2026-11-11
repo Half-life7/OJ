@@ -54,6 +54,23 @@ func TestContestListUsesNewestFirstCursor(t *testing.T) {
 		t.Fatalf("newest-first list: %+v %v", items, err)
 	}
 }
+
+func TestManageCanAddProblemWhileContestIsRunning(t *testing.T) {
+	s, m := fixture(t)
+	begin(m, "super_admin")
+	now := s.now()
+	m.ExpectQuery("SELECT .*FROM contests WHERE id=.*FOR UPDATE").WithArgs(uint64(5)).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "scoring_mode", "enrollment_policy", "approval_required", "team_mode", "starts_at", "ends_at", "revision", "settled_at"}).
+			AddRow(5, "Running", "OI", "admin_add", false, false, now.Add(-time.Hour), now.Add(time.Hour), 1, nil),
+	)
+	m.ExpectExec("INSERT INTO contest_problems").WithArgs(uint64(5), uint64(42)).WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectExec("INSERT INTO audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectCommit()
+	err := s.Manage(context.Background(), auth.User{ID: 1}, 5, Manage{Action: "add_problem", ProblemID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 func TestIdentityAuditFailureRollsBack(t *testing.T) {
 	s, m := fixture(t)
 	begin(m, "super_admin")

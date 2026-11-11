@@ -99,7 +99,8 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		if !bind(c, &in) {
 			return
 		}
-		reply(c, nil, h.service.ConfirmCSV(c.Request.Context(), user(c), id(c), in.Token))
+		v, e := h.service.ConfirmCSV(c.Request.Context(), user(c), id(c), in.Token)
+		reply(c, v, e)
 	})
 	g.GET("/api/contests/:id/export.csv", func(c *gin.Context) {
 		v, e := h.service.ExportCSV(c.Request.Context(), user(c), id(c))

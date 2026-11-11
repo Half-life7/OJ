@@ -90,7 +90,7 @@ func boardQueryPeriod(kind, period string) (string, error) {
 		default:
 			return "", ErrInvalid
 		}
-		return `SELECT x.person_id,x.username,x.display_name,x.student_no,x.value,x.participations,x.reached_at
+		return `SELECT i.person_id,i.username,i.display_name,i.student_no,COALESCE(x.value,0) AS value,COALESCE(x.participations,0) AS participations,x.reached_at
 FROM (` + contestIdentities + `) i
 LEFT JOIN (
   SELECT identity_key,SUM(points) AS value,COUNT(*) AS participations,MAX(reached_at) AS reached_at

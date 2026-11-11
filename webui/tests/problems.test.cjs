@@ -243,6 +243,23 @@ test("admin edits carry the loaded revision and CSRF token; conflicts preserve e
   assert.equal(ui.elements.get("problem-editor-fields").disabled, false);
 });
 
+test("published public problem exposes a direct library verification link", async () => {
+  const published = { ...sample, status: "published", visibility: "public" };
+  const ui = boot("admin-problems", async (url) => {
+    if (url === "/api/users/me") return { data: { global_role: "super_admin" } };
+    if (url.startsWith("/api/admin/problems?")) return { data: { items: [published], page: 1, limit: 20, total: 1 } };
+    if (url === "/api/admin/problems/7") return { data: published };
+    if (url.includes("/data-versions?")) return { data: { items: [], page: 1, limit: 20, total: 0 } };
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await settle();
+  await ui.elements.get("admin-problem-list").querySelectorAll("button")[0].trigger("click");
+  await settle();
+  const link = ui.elements.get("problem-public-preview");
+  assert.equal(link.hidden, false);
+  assert.match(link.href, /\/problems\?q=A%20%2B%20B$/);
+});
+
 test("reverting a dirty statement re-enables upload without an unnecessary save", async () => {
   const ui = boot("admin-problems", async (url) => {
     if (url === "/api/users/me") return { data: { global_role: "super_admin" } };

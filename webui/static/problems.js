@@ -574,6 +574,9 @@ print("AC" if output.split() == expected.split() else "WA")
     byID("problem-editor-version").textContent = problem ? "修订 " + problem.revision + " · 题面版本 " + problem.statement_version + " · 更新于 " + date(problem.updated_at) : "新题默认为隐藏草稿。";
     byID("problem-save").textContent = problem ? "保存题面修改" : "创建题目";
     byID("problem-reload").hidden = !problem;
+    const publicPreview = byID("problem-public-preview");
+    publicPreview.hidden = !problem || problem.status !== "published" || problem.visibility !== "public";
+    publicPreview.href = problem ? `/problems?q=${encodeURIComponent(problem.title)}` : "/problems";
     byID("problem-versions-panel").hidden = !problem;
     byID("problem-current-data").textContent = problem && problem.data_version ? "当前使用数据版本 v" + problem.data_version : "尚未上传测试数据。";
     byID("problem-version-detail").hidden = true;

@@ -99,6 +99,7 @@ class TestFormData {
   }
   entries() { return this.data.entries(); }
   [Symbol.iterator]() { return this.entries(); }
+  append(name, value) { this.data.set(name, value); }
 }
 
 function boot(responses, pathname = "/contests") {
@@ -280,4 +281,77 @@ test("answer sheet marks formal submissions and opens the focused problem editor
   await settle();
   assert.match(ui.elements.get("contest-focus-statement").children.map((child) => child.innerHTML).join(""), /Open statement/);
   assert.equal(ui.elements.get("contest-problem-select").value, "2");
+});
+
+test("contest problem package preview stays in the contest workspace", async () => {
+  const record = contest(8, "Package contest");
+  let importedID = 0;
+  let publishedInput = null;
+  let boundProblem = 0;
+  const ui = boot(async (url, options) => {
+    if (url === "/api/users/me") return { data: user };
+    if (url === "/api/contests?before=0") return { data: [record] };
+    if (url === "/api/contests/8") return { data: view(record) };
+    if (url === "/api/auth/csrf") return { data: { csrf_token: "csrf" } };
+    if (url === "/api/admin/problems/package-preview") {
+      assert.equal(options.method, "POST");
+      assert.equal(options.body.data.get("sample"), "1");
+      return { data: { source: "builtin", preview: { title: "A+B", cases: [{ id: "1", score: 100 }], total_score: 100, digest: "abc", tags: ["入门"], warnings: [] } } };
+    }
+    if (url === "/api/admin/problems/package-import") {
+      importedID = 77;
+      return { data: {
+        id: 77, title: "A+B", problem_type: "programming", checker_mode: "tokens", checker_source: "",
+        description: "Description", input_format: "Input", output_format: "Output", sample_input: "1 2", sample_output: "3",
+        time_limit_ms: 1000, memory_limit_mb: 256, difficulty: "easy", tags: ["入门"], status: "draft", visibility: "hidden", revision: 1,
+      } };
+    }
+    if (url === "/api/admin/problems/77" && options.method === "PUT") {
+      publishedInput = JSON.parse(options.body);
+      return { data: { id: 77, status: "published", visibility: "contest_only", revision: 2 } };
+    }
+    if (url === "/api/contests/8/manage") {
+      boundProblem = JSON.parse(options.body).problem_id;
+      return { data: null };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  }, "/contests/8");
+  await settle();
+  await ui.elements.get("contest-package-sample").trigger("click");
+  await settle();
+  assert.match(ui.elements.get("contest-package-preview").textContent, /A\+B/);
+  assert.match(ui.elements.get("contest-package-preview").textContent, /100 分/);
+  assert.equal(ui.elements.get("contest-package-confirm").disabled, false);
+  await ui.elements.get("contest-package-confirm").trigger("click");
+  await settle();
+  assert.equal(importedID, 77);
+  assert.equal(publishedInput.status, "published");
+  assert.equal(publishedInput.visibility, "contest_only");
+  assert.equal(boundProblem, 77);
+});
+
+test("contest UI uses the competition problem bank wording and shows one-time temporary credentials", async () => {
+  assert.doesNotMatch(template, /一镜到底/);
+  const record = contest(9, "CSV contest");
+  const ui = boot(async (url) => {
+    if (url === "/api/users/me") return { data: user };
+    if (url === "/api/contests?before=0") return { data: [record] };
+    if (url === "/api/contests/9") return { data: view(record) };
+    if (url === "/api/auth/csrf") return { data: { csrf_token: "csrf" } };
+    if (url === "/api/contests/9/csv/preview") {
+      return { data: {
+        token: "token", valid: true, columns: [{ source: "账号", field: "username" }],
+        rows: [{ line: 2, username: "exam001", display_name: "张三", student_no: "S001", team: "Team", participant_type: "official", new_account: true, initial_password: "OneTime123", error: "" }],
+      } };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  }, "/contests/9");
+  await settle();
+  ui.elements.get("contest-csv-form").elements.csv.value = "账号,姓名,学号\n exam001,张三,S001";
+  await ui.elements.get("contest-csv-form").trigger("submit", { submitter: ui.elements.get("contest-csv-form").querySelector("button") });
+  await settle();
+  const credentials = ui.elements.get("contest-csv-preview").querySelectorAll("textarea");
+  assert.equal(credentials.length, 1);
+  assert.match(credentials[0].value, /exam001,OneTime123,张三,S001,Team/);
+  assert.equal(ui.elements.get("contest-csv-confirm").disabled, false);
 });

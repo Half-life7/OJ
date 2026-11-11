@@ -399,7 +399,7 @@ func (s *Service) Manage(ctx context.Context, a auth.User, id uint64, m Manage) 
 				}
 			}
 		case "add_problem":
-			if !now.Before(c.Start) {
+			if !now.Before(c.End) {
 				return ErrConflict
 			}
 			r, e := tx.ExecContext(ctx, `INSERT INTO contest_problems(contest_id,problem_id,statement_version,data_version) SELECT ?,id,statement_version,data_version FROM problems WHERE id=? AND status='published' AND data_version IS NOT NULL`, id, m.ProblemID)
@@ -427,7 +427,7 @@ func (s *Service) Manage(ctx context.Context, a auth.User, id uint64, m Manage) 
 				}
 			}
 		case "add_team":
-			if !now.Before(c.Start) {
+			if !now.Before(c.End) {
 				return ErrConflict
 			}
 			_, err = s.addTeam(ctx, tx, c, m.Name, m.Members, "active", m.Type)

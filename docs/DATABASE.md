@@ -4,6 +4,8 @@
 
 迁移 **8**：新增 contest_freezes 封榜历史与 contest_imports 预览/确认状态；其他历史表保持。预览比较解码后的 JSON，确认、批量状态及快照审计同事务。部署恢复包含会话撤销与系统审计，见 [批次 5](OPERATIONS.md)。
 
+`contest_imports.csv_data` 当前保存经过规范化、仅含名单字段与 bcrypt 哈希的 JSON 快照，不保存浏览器提交的原始 CSV 或临时账号明文密码。预览响应中的随机初始密码只在浏览器当前页面展示；15 分钟令牌过期或确认后不能重新取得。该格式调整没有数据库迁移，旧升级前尚未确认的临时预览令牌应重新生成。
+
 迁移 7。新增 community_documents、problem_list_items、problem_list_favorites、discussion_likes、community_write_limits、global_board_cache；内容使用 revision 和软删除，收藏/点赞以 `(document_id,user_id)` 唯一键防重。三榜缓存可从权威事实重建，身份关联和结算会使缓存失效。口径和验收见 [批次 4](COMMUNITY.md)。下文迁移 6 段落保留为此前版本说明。
 
 迁移 6。批次 3 新增 contests、contest_admins、contest_problems、contest_teams、contest_team_members、contest_snapshots、contest_points；persons 增加 organization 与 revision，submissions 增加比赛/队伍引用约束。参赛身份快照、每轮逐点结果及结算积分保留历史；积分主键 `(contest_id, person_id)` 防止重复入账。规则见 [比赛说明](CONTESTS.md)。迁移 6 回退在已有比赛提交时主动拒绝恢复“仅日常提交”约束，避免静默删除历史。

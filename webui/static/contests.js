@@ -73,6 +73,40 @@
       clearTimeout(timer);
     }
   }
+  async function apiUpload(path, formData) {
+    if (!csrfToken) {
+      const token = await api("/api/auth/csrf");
+      csrfToken = token?.csrf_token || "";
+      if (!csrfToken) throw new APIError("无法验证当前页面，请刷新后重试。", 403);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120000);
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: controller.signal,
+        body: formData,
+      });
+      let result = null;
+      try { result = await response.json(); } catch {
+        throw new APIError(response.status === 413 ? "题包超过大小限制。" : "题包服务暂时无法响应。", response.status);
+      }
+      if (!response.ok || result.code) {
+        if (response.status === 403) csrfToken = "";
+        const requestID = response.headers?.get?.("X-Request-ID") || "";
+        throw new APIError((result.message || "题包操作未完成。") + (requestID ? `（请求 ID：${requestID}）` : ""), response.status, result.data?.fields, requestID);
+      }
+      return result.data;
+    } catch (error) {
+      if (error instanceof APIError) throw error;
+      throw new APIError(error.name === "AbortError" ? "题包上传超时，请先核对题目是否已经导入。" : "题包上传失败，请检查网络。", 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   async function run(button, fn, target = "contest-message") {
     if (button) button.disabled = true;
     message(target, "正在处理…", true);
@@ -81,7 +115,7 @@
     } catch (error) {
       message(target, error.message);
     } finally {
-      if (button) button.disabled = false;
+      if (button) button.disabled = button.id === "contest-package-confirm" ? !packagePreview : false;
     }
   }
 
@@ -150,6 +184,10 @@
   let savedSnapshot = "";
   let detailLoading = false;
   let editingMode = false;
+  let packageSource = null;
+  let packageFile = null;
+  let packagePreview = null;
+  let packageEpoch = 0;
   let lastCreation = null;
   try { lastCreation = JSON.parse(sessionStorage.getItem("biue-contest-creation-v2") || "null"); } catch {}
   function rememberCreation(value) {
@@ -280,7 +318,8 @@
       const form = byID(id);
       for (const field of form.elements) field.disabled = busy;
     }
-    for (const id of ["contest-enroll", "contest-refresh", "contest-settle", "contest-csv-file", "contest-csv-confirm"]) byID(id).disabled = busy;
+    for (const id of ["contest-enroll", "contest-refresh", "contest-settle", "contest-csv-file", "contest-csv-confirm", "contest-package-file", "contest-package-sample"]) byID(id).disabled = busy;
+    byID("contest-package-confirm").disabled = busy || !packagePreview;
   }
   function showCreate() {
     if (!user || user.global_role !== "super_admin" || user.account_type !== "permanent") {
@@ -292,13 +331,97 @@
   }
   function switchPanel(name) {
     if (!view) return;
-    if (!view.manager && ["edit", "manage", "import", "accounts", "settle"].includes(name)) name = "overview";
+    if (!view.manager && ["edit", "package", "manage", "import", "accounts", "settle"].includes(name)) name = "overview";
+    if (name === "package" && user?.global_role !== "super_admin") name = "overview";
     activePanel = name;
     for (const button of document.querySelectorAll("[data-contest-panel]")) button.classList.toggle("active", button.dataset.contestPanel === name);
     for (const section of document.querySelectorAll("[data-contest-panel-content]")) section.hidden = section.dataset.contestPanelContent !== name;
     if (name === "manage") loadManageOptions().catch((error) => message("contest-detail-message", error.message));
     if (name === "settle") renderSettleTarget();
-    if (name === "submit") renderFocusedProblem();
+    if (name === "submit") {
+      renderFocusedProblem();
+      setTimeout(() => contestSourceEditor?.requestMeasure?.(), 0);
+    }
+  }
+  function clearPackageState(text = "") {
+    ++packageEpoch;
+    packageSource = null;
+    packageFile = null;
+    packagePreview = null;
+    byID("contest-package-preview").replaceChildren();
+    byID("contest-package-confirm").disabled = true;
+    message("contest-package-message", text);
+  }
+  function packageFormData() {
+    if (!packageSource) throw new APIError("请先选择题包或内置样例。", 400);
+    const data = new FormData();
+    if (packageSource === "builtin") data.append("sample", "1");
+    else if (packageFile) data.append("archive", packageFile, packageFile.name);
+    else throw new APIError("选择题包文件已失效，请重新选择。", 400);
+    return data;
+  }
+  function renderPackagePreview(preview) {
+    const target = byID("contest-package-preview");
+    target.replaceChildren();
+    target.append(node("h3", preview.title || "未命名题包"));
+    target.append(node("p", `${preview.cases?.length || 0} 个测试点 · ${preview.total_score || 0} 分 · 摘要 ${preview.digest || "—"}`, "profile-note"));
+    if (preview.tags?.length) target.append(node("p", `标签：${preview.tags.join("、")}`, "field-help"));
+    if (preview.warnings?.length) {
+      const warnings = node("ul", undefined, "field-help");
+      for (const warning of preview.warnings) warnings.append(node("li", warning));
+      target.append(warnings);
+    }
+    const cases = node("div", undefined, "package-case-grid");
+    for (const item of preview.cases || []) cases.append(node("span", `${item.id} · ${item.score} 分`, "problem-badge"));
+    target.append(cases);
+  }
+  async function previewContestPackage(sample) {
+    const sequence = ++packageEpoch;
+    packagePreview = null;
+    byID("contest-package-confirm").disabled = true;
+    byID("contest-package-preview").replaceChildren(node("p", "正在读取并校验题包…", "profile-note"));
+    const result = await apiUpload("/api/admin/problems/package-preview", packageFormData());
+    if (sequence !== packageEpoch || !selected) return;
+    packagePreview = result.preview;
+    renderPackagePreview(result.preview);
+    byID("contest-package-confirm").disabled = false;
+    message("contest-package-message", sample ? "内置题包校验通过，确认后将导入并加入当前比赛。" : "题包校验通过，确认后将导入并加入当前比赛。", true);
+  }
+  async function importContestPackage() {
+    if (!selected || !packageSource || !packagePreview) throw new APIError("请先重新预览题包。", 409);
+    if (new Date(selected.ends_at) <= new Date()) throw new APIError("比赛已经结束，不能再导入并绑定新题目。", 409);
+    const contestID = selected.id;
+    const contestTitle = selected.title;
+    const imported = await apiUpload("/api/admin/problems/package-import", packageFormData());
+    if (!imported?.id) throw new APIError("题包导入响应缺少题目编号，请到题目管理核对。", 503);
+    try {
+      await api(`/api/admin/problems/${imported.id}`, "PUT", {
+        title: imported.title,
+        problem_type: imported.problem_type,
+        checker_mode: imported.checker_mode,
+        checker_source: imported.checker_source || "",
+        description: imported.description,
+        input_format: imported.input_format,
+        output_format: imported.output_format,
+        sample_input: imported.sample_input,
+        sample_output: imported.sample_output,
+        time_limit_ms: imported.time_limit_ms,
+        memory_limit_mb: imported.memory_limit_mb,
+        difficulty: imported.difficulty,
+        tags: imported.tags,
+        status: "published",
+        visibility: "contest_only",
+        revision: imported.revision,
+      });
+      await api(`/api/contests/${contestID}/manage`, "POST", { action: "add_problem", problem_id: imported.id });
+    } catch (error) {
+      throw new APIError(`题包已经导入题目管理（#${imported.id}），但发布或加入比赛失败：${error.message}`, error.status);
+    }
+    clearPackageState();
+    await loadDetail(contestID);
+    activePanel = "package";
+    switchPanel("package");
+    message("contest-package-message", `“${imported.title}”已导入并固定到比赛“${contestTitle}”（#${contestID}）。`, true);
   }
   function renderOverview(contest) {
     const target = byID("contest-overview");
@@ -409,7 +532,7 @@
     byID("contest-submission-result").replaceChildren();
     const problem = view?.problems.find((item) => item.problem_id === Number(problemID));
     if (!problem) {
-      target.append(node("p", "请从左侧“比赛题目”选择一道题。", "profile-note"));
+      target.append(node("p", "请从“比赛题库”选择一道题。", "profile-note"));
       byID("contest-problem-prev").disabled = true;
       byID("contest-problem-next").disabled = true;
       updateContestSubmissionAvailability();
@@ -458,6 +581,8 @@
     byID("contest-info").textContent = `#${contest.id} · ${contest.scoring_mode} · ${date(contest.starts_at)} — ${date(contest.ends_at)}`;
     byID("contest-export").href = `/api/contests/${contest.id}/export.csv`;
     for (const item of document.querySelectorAll("[data-contest-manager]")) item.hidden = !view.manager;
+    byID("contest-package-nav").hidden = user?.global_role !== "super_admin";
+    byID("contest-package-access").hidden = user?.global_role === "super_admin";
     const enrollAvailable = contest.enrollment_policy === "open" && !contest.team_mode && !contest.settled_at && new Date(contest.starts_at) > new Date();
     byID("contest-enroll").hidden = !enrollAvailable;
     renderOverview(contest);
@@ -528,6 +653,7 @@
     byID("contest-title").textContent = `比赛 #${id}`;
     message("contest-detail-message", "正在读取比赛详情…", true);
     invalidateCSV("切换比赛后，请重新生成 CSV 预览。");
+    clearPackageState("切换比赛后，请重新选择题包。");
     try {
       const result = await api(`/api/contests/${encodeURIComponent(id)}`);
       if (sequence !== detailEpoch || result.contest.id !== Number(id)) return null;
@@ -648,9 +774,9 @@
     byID("contest-manage-members").value = [...byID("contest-member-option").selectedOptions].map((item) => item.value).join(",");
     byID("contest-manage-team-ids").value = [...byID("contest-bulk-teams").querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value).join(",");
     const labels = {
-      add_problem: "会把所选题目的当前题面版本与数据版本固定到本比赛；之后题目更新不会改动比赛快照。",
+      add_problem: "会把所选题目的当前题面版本与数据版本固定到本比赛；进行中允许应急补题，结束后拒绝。",
       remove_problem: "会从本比赛移除所选题目；只允许赛前执行。",
-      add_team: "会创建队伍并绑定所选人员；提交后受比赛报名策略和权限约束。",
+      add_team: "会创建队伍并绑定所选人员；进行中允许应急补录，结束后拒绝。",
       team_status: "会改变所选队伍的状态和正式/打星类型。",
       bulk_status: "会批量改变已勾选队伍的状态和类型，请核对名单。",
       grant_admin: "会授予所选永久账号本比赛的管理权限。",
@@ -678,7 +804,29 @@
     target.replaceChildren(node("h3", `预览所属：${state.title}（#${state.contestID}）`));
     target.append(node("p", `${preview.rows.length} 行 · ${preview.valid ? "可以导入" : "存在错误"} · 令牌仅绑定此比赛和此 CSV 内容`));
     if (preview.columns?.length) target.append(node("p", `已识别列：${preview.columns.map((column) => `${column.source} → ${column.field}`).join("；")}`, "field-help"));
-    for (const row of preview.rows) target.append(node("p", `第 ${row.line} 行 · ${row.username} · ${row.team} · ${row.participant_type} · ${row.error || "可导入"}`));
+    const credentials = preview.rows.filter((row) => row.new_account && row.initial_password);
+    state.credentials = credentials;
+    for (const row of preview.rows) {
+      const identity = `${row.display_name || "—"} / ${row.student_no || "无学号"}`;
+      const account = row.new_account ? "将创建比赛临时账号" : "匹配已有永久账号";
+      target.append(node("p", `第 ${row.line} 行 · ${row.username} · ${identity} · ${row.team} · ${row.participant_type} · ${account} · ${row.error || "可导入"}`));
+    }
+    if (credentials.length) {
+      const heading = node("div", undefined, "credential-result-heading");
+      heading.append(node("h3", `新比赛账号 ${credentials.length} 个`), node("p", "初始密码只在此预览响应中返回；刷新或重新预览后旧密码无法再次取得。请确认前复制或下载。", "field-help"));
+      const copy = node("button", "复制账号密码", "button secondary");
+      copy.type = "button";
+      const textarea = node("textarea");
+      textarea.readOnly = true;
+      textarea.rows = Math.min(10, credentials.length + 1);
+      textarea.value = ["账号,初始密码,姓名,学号,队伍", ...credentials.map((row) => [row.username, row.initial_password, row.display_name, row.student_no, row.team].join(","))].join("\n");
+      copy.addEventListener("click", () => {
+        textarea.select();
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(textarea.value).then(() => message("contest-detail-message", "比赛账号和初始密码已复制。", true)).catch(() => textarea.select());
+      });
+      heading.append(copy);
+      target.append(heading, textarea);
+    }
   }
   function renderSettleTarget() {
     if (!selected) return;
@@ -824,6 +972,25 @@
   });
   byID("contest-more").addEventListener("click", (event) => run(event.target, () => list(true), "contest-message"));
   byID("contest-refresh").addEventListener("click", (event) => run(event.target, () => selected && loadDetail(selected.id), "contest-detail-message"));
+  byID("contest-package-file").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 32 * 1024 * 1024) {
+      clearPackageState("题包 ZIP 最大 32 MiB。");
+      return;
+    }
+    packageFile = file;
+    packageSource = "upload";
+    run(event.target, () => previewContestPackage(false), "contest-package-message");
+  });
+  byID("contest-package-sample").addEventListener("click", (event) => {
+    packageFile = null;
+    packageSource = "builtin";
+    run(event.target, () => previewContestPackage(true), "contest-package-message");
+  });
+  byID("contest-package-confirm").addEventListener("click", (event) => {
+    run(event.target, importContestPackage, "contest-package-message");
+  });
   byID("contest-enroll").addEventListener("click", (event) => run(event.target, async () => {
     if (!selected) return;
     const id = selected.id;
@@ -844,7 +1011,7 @@
     else showCenter();
   });
   byID("contest-problem-select").addEventListener("change", () => renderFocusedProblem());
-  for (const id of ["contest-problem-one-page", "contest-problem-list"]) byID(id).addEventListener("click", () => switchPanel("problems"));
+  byID("contest-problem-list").addEventListener("click", () => switchPanel("problems"));
   byID("contest-problem-prev").addEventListener("click", () => {
     const index = view?.problems.findIndex((problem) => problem.problem_id === Number(byID("contest-problem-select").value)) ?? -1;
     if (index > 0) renderFocusedProblem(view.problems[index - 1].problem_id);
@@ -918,7 +1085,7 @@
       const sequence = ++csvEpoch;
       const preview = await api(`/api/contests/${id}/csv/preview`, "POST", { csv });
       if (sequence !== csvEpoch || !selected || selected.id !== id) return;
-      csvState = { contestID: id, title: selected.title, csv, token: preview.token, rows: preview.rows, valid: preview.valid };
+      csvState = { contestID: id, title: selected.title, csv, token: preview.token, rows: preview.rows, valid: preview.valid, credentials: [] };
       renderCSVPreview(csvState, preview);
       byID("contest-csv-confirm").disabled = !preview.valid;
       message("contest-detail-message", preview.valid ? "预览已生成，确认按钮仅在当前比赛和当前 CSV 未变化时有效。" : "预览包含错误，请修改后重新生成。", preview.valid);
@@ -932,10 +1099,10 @@
       }
       const state = csvState;
       byID("contest-csv-confirm").disabled = true;
-      await api(`/api/contests/${state.contestID}/csv/confirm`, "POST", { token: state.token });
+      const result = await api(`/api/contests/${state.contestID}/csv/confirm`, "POST", { token: state.token });
       csvState = null;
       await loadDetail(state.contestID);
-      message("contest-detail-message", `名单已导入“${state.title}”（#${state.contestID}）。`, true);
+      message("contest-detail-message", `名单已导入“${state.title}”（#${state.contestID}），新建 ${result?.created_accounts || 0} 个比赛账号。`, true);
     }, "contest-detail-message").finally(() => { byID("contest-csv-confirm").disabled = !csvState; });
   });
   byID("contest-temporary-form").addEventListener("submit", (event) => {

@@ -50,7 +50,7 @@
   </section>
   <div class="problem-admin-grid">
     <section class="problem-editor profile-card">
-      <div class="problem-panel-heading"><div><span id="problem-editor-mode" class="card-number">NEW PROBLEM</span><h2 id="problem-editor-heading">创建题目</h2></div><button id="problem-reload" class="button secondary" type="button" hidden>重新加载此题</button></div>
+      <div class="problem-panel-heading"><div><span id="problem-editor-mode" class="card-number">NEW PROBLEM</span><h2 id="problem-editor-heading">创建题目</h2></div><div class="page-actions"><a id="problem-public-preview" class="button secondary" target="_blank" rel="noopener" hidden>在公共题库查看</a><button id="problem-reload" class="button secondary" type="button" hidden>重新加载此题</button></div></div>
       <p id="problem-editor-version" class="profile-note">新题默认为隐藏草稿。</p>
       <form id="problem-editor-form">
         <fieldset id="problem-editor-fields">
@@ -58,16 +58,16 @@
           <label for="edit-problem-type">题型<select id="edit-problem-type" name="problem_type"><option value="programming">程序题</option><option value="output_only">输出型（提交 case_id 到输出的 JSON）</option></select></label><label for="edit-checker-mode">比较器<select id="edit-checker-mode" name="checker_mode"><option value="tokens">空白分隔精确比较</option><option value="spj">Python Special Judge</option></select></label>
           <div id="checker-workspace" hidden>
             <div class="problem-panel-heading"><div><span class="card-number">SPECIAL JUDGE</span><p class="field-help">从按钮载入最小模板，或粘贴/选择本地 `.py` 文件。保存后使用普通提交实际调用隔离判题器自测。</p></div><div class="page-actions"><button id="checker-template" type="button" class="button secondary">载入模板</button><label class="button secondary" for="checker-file">导入 .py</label><input id="checker-file" type="file" accept=".py,text/x-python,text/plain" hidden></div></div>
-            <label for="edit-checker-source">SPJ 源码（管理员专用）<textarea id="edit-checker-source" name="checker_source" rows="12" spellcheck="false"></textarea></label>
+            <div class="editor-field"><label for="edit-checker-source">SPJ 源码（管理员专用）</label><textarea id="edit-checker-source" name="checker_source" rows="12" spellcheck="false"></textarea></div>
             <p class="field-help">stdin 为含 input / expected / output 的 base64 JSON；程序只能输出 AC 或 WA。源码异常不会向选手泄漏诊断。</p>
             <p class="field-help">保存会生成新题面版本；已有提交、比赛快照和重判继续使用其固定版本。需要新规则时创建新提交，旧快照不会被覆盖。</p>
             <div class="problem-field-pair"><div><label for="checker-example-input">自测输入预览</label><textarea id="checker-example-input" rows="4" readonly></textarea></div><div><label for="checker-example-output">自测预期输出预览</label><textarea id="checker-example-output" rows="4" readonly></textarea></div></div>
             <a id="checker-self-test" class="button primary" href="/problems" target="_blank" rel="noopener" hidden>在新页面实际提交自测</a>
           </div>
-          <label for="edit-description">题目描述（Markdown）<span class="required">*</span></label><textarea id="edit-description" name="description" required rows="9" aria-describedby="description-help"></textarea><p id="description-help" class="field-help">支持 Markdown；使用工具栏或 Ctrl/Cmd+B、I、K、` 等快捷键，Ctrl/Cmd+Enter 安全预览。最多 64 KiB。</p>
+          <div class="editor-field"><label for="edit-description">题目描述（Markdown）<span class="required">*</span></label><textarea id="edit-description" name="description" required rows="9" aria-describedby="description-help"></textarea></div><p id="description-help" class="field-help">支持 Markdown；使用工具栏或 Ctrl/Cmd+B、I、K、` 等快捷键，Ctrl/Cmd+Enter 安全预览。最多 64 KiB。</p>
           <section id="problem-markdown-preview" class="profile-card markdown-preview" hidden><div class="problem-panel-heading"><h3>Markdown 安全预览</h3><button id="problem-markdown-preview-close" class="button secondary" type="button">关闭预览</button></div><div id="problem-markdown-preview-html" class="learning-prose"></div></section>
-          <label for="edit-input-format">输入格式（Markdown）</label><textarea id="edit-input-format" name="input_format" rows="4"></textarea>
-          <label for="edit-output-format">输出格式（Markdown）</label><textarea id="edit-output-format" name="output_format" rows="4"></textarea>
+          <div class="editor-field"><label for="edit-input-format">输入格式（Markdown）</label><textarea id="edit-input-format" name="input_format" rows="4"></textarea></div>
+          <div class="editor-field"><label for="edit-output-format">输出格式（Markdown）</label><textarea id="edit-output-format" name="output_format" rows="4"></textarea></div>
           <div class="problem-field-pair"><div><label for="edit-sample-input">样例输入</label><textarea id="edit-sample-input" name="sample_input" rows="5" spellcheck="false"></textarea></div><div><label for="edit-sample-output">样例输出</label><textarea id="edit-sample-output" name="sample_output" rows="5" spellcheck="false"></textarea></div></div>
           <p class="field-help">输入输出格式与每项样例各最多 16 KiB。</p>
           <div class="problem-field-pair"><div><label for="edit-time-limit">时间限制（ms）</label><input id="edit-time-limit" name="time_limit_ms" type="number" min="1" max="60000" step="1" value="1000" required></div><div><label for="edit-memory-limit">内存限制（MiB）</label><input id="edit-memory-limit" name="memory_limit_mb" type="number" min="16" max="4096" step="1" value="256" required></div></div>

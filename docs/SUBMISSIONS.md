@@ -9,10 +9,11 @@
 - 日常场景仅永久账号可用，contest_id 与 contest_team_id 均为 NULL。批次 3 已接入比赛：请求带 contest_id，服务端验证参赛窗口/队伍状态并固定比赛题面与数据版本；contest_team_id 从成员关系推导，不能由客户端指定。临时账号仅允许比赛场景。
 - POST /api/submissions 创建正式 Submit，字段为 problem_id、language、source_code。POST /api/runs 创建 Run，额外允许 stdin；省略 stdin 使用样例输入，空字符串表示显式空输入。Run 不能选择隐藏测试点，也不计入成绩。
 - 题目必须为已发布的公开题目。Submit 还要求存在已导入的测试数据；创建时锁定题面和数据版本，后续编辑或重传不改变已有任务。
-- source_code 为非空有效 UTF-8，最多 64 KiB；Run 输入最多 64 KiB；JSON 请求体上限 256 KiB。语言 ID 为 cpp17/go/python3/java，由固定语言注册表提供。
+- source_code 为非空有效 UTF-8，最多 64 KiB；Run 输入最多 64 KiB；JSON 请求体上限 256 KiB。语言 ID 为 cpp17/go/python3/java/javascript/text，由固定语言注册表提供。
 - GET /api/submissions 的“我的提交”列表只列出正式 Submit，支持分页和 problem_id；可选的 `kind=Submit` 保持兼容，`kind=Run` 返回 400。Run 仍通过自身创建、详情和状态接口完成即时自测，但不进入用户提交记录。GET /api/submissions/:id 允许本人、所属比赛的授权管理员或超级管理员读取，其他用户获得 404。列表不返回源码，正式测试的输入、答案和程序输出不对外公开。比赛成员提交查询见 [比赛说明](CONTESTS.md)。
-- GET /api/languages 提供语言 ID 和显示名。题目页提供可开关的编辑模式：默认按阅读顺序纵向排列，开启后桌面左侧固定题面、右侧代码编辑与自测区，手机恢复单列且不丢代码/语言/输入。自测区并列展示标准输入和运行输出，结果只留在当前页面，不显示提交详情入口；正式提交才提供记录链接。
-- 页面提供本地 CodeMirror 6 编辑器、Run/Submit、状态轮询；保持无前端运行时构建步骤。编辑器支持五语言语法高亮、四空格 Tab/Shift+Tab、Ctrl/Cmd+/ 语言注释、撤销、搜索与括号补全，缺少 nonce 或初始化失败时回退 textarea。
+- GET /api/languages 提供语言 ID 和显示名。题目页提供可开关的编辑模式：默认按阅读顺序纵向排列，开启后桌面左侧固定题面、右侧大尺寸代码编辑与自测区，手机恢复单列且不丢代码/语言/输入。自测区并列展示标准输入和运行输出，结果只留在当前页面，不显示提交详情入口；正式提交才提供记录链接。
+- 题库和比赛页共用本地 CodeMirror 6 编辑器外壳，提供分组工具栏、行/列/选区状态栏、全屏放大、自动换行、行号、括号/当前行高亮、撤销/重做、查找替换、复制/删除行、语言注释和语法高亮。无选区时 `Tab` 在光标位置插入四空格；有选区时 `Tab`/`Shift+Tab` 只对选中行缩进/反缩进，不再无条件整行移动。
+- `Ctrl/Cmd+Space` 手动触发补全，输入时可自动弹出；候选来自 C++17/Go/Python 3/Java/JavaScript/Markdown 关键字、常用标准库、竞赛片段和当前文档标识符。切换语言会重建语法、注释规则与补全字典。缺少 nonce 或初始化失败时继续回退 textarea。
 
 ## 可靠性与限流
 

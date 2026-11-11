@@ -318,6 +318,7 @@
       workspace.classList.toggle("is-editing", enabled);
       byID("problem-edit-mode").setAttribute("aria-pressed", String(enabled));
       byID("problem-edit-mode").textContent = enabled ? "退出编辑模式" : "开启编辑模式";
+      window.setTimeout(() => editor?.requestMeasure?.(), 0);
       if (enabled) editor?.focus?.();
     });
     byID("composer-retry").addEventListener("click", initialize);
