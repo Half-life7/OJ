@@ -14,6 +14,8 @@
 
 全部响应沿用 `{code,message,data}`；管理写请求需要 CSRF Cookie 和 `X-CSRF-Token`。分页默认 page=1、limit=20，limit 最大 100。
 
+题目管理页使用独立工作区：左侧导航在“题目列表、创建题目、编辑当前题目、上传测试数据、数据版本”之间切换，只显示一个右侧面板。URL hash 保留 `list/new/edit/data/versions` 与当前题目 ID；从列表选择题目后进入编辑工作区，不再把编辑器接在列表下方。同一模式用于比赛中心列表/创建和身份列表/编辑/关联。题面或数据版本保存/发布后会自动调用单题范围重判，保存与重判结果分别展示。
+
 | 方法与路径 | 用途 |
 | --- | --- |
 | GET /api/problems | 公开列表，支持 q、difficulty、tag 及分页 |
@@ -58,7 +60,7 @@ SPJ 编辑区提供最小 Python 模板、本地 `.py` 导入、样例输入/预
 内置样例位于仓库根目录 `导入样例/`，当前包含 `problem.yaml`、`problem_zh.md`、`testdata/config.yaml`、`testdata/1.in` 和 `testdata/1.out`。运行时默认读取 `PROBLEM_SAMPLE_DIR=导入样例`，镜像会把该目录复制到 `/app/导入样例`。
 
 - 管理页测试中心先调用 `package-preview` 展示标题、Markdown 摘要、测试点、字节数和总分；只有显式点击“确认导入”才调用 `package-import`。
-- 上传题包必须使用同样结构。`problem.yaml` 至少包含 `title`，可带 `tag`、难度、时间/内存；外部站点的 `pid`、`owner`、`nSubmit`、`nAccept` 等统计被忽略。Markdown 可识别题目描述、输入、输出和 `input1/output1` 样例代码块；无法识别分区时完整原文仍保留在描述中并显示警告。
-- `testdata/config.yaml` 读取 subtasks/cases/score/input/output。每个 case 可显式覆盖 score；未覆盖时子任务分值在 cases 间均分，余数分配给该子任务最后一点并显示警告。测试文件继续使用 ID、配对、文件/总字节、ZIP32、CRC、路径和总分校验，生成不可变摘要。
+- 上传题包必须使用同样结构。允许 ZIP 内只有一个包装根目录（例如用户样例的 `23/`），解析前会安全剥离；仍拒绝多根混合、路径穿越、符号链接和未知文件。`problem.yaml` 至少包含 `title`，可带 `tag`、难度、时间/内存；外部站点的 `pid`、`owner`、`nSubmit`、`nAccept` 等统计被忽略。Markdown 可识别题目描述、输入、输出和 `input1/output1` 样例代码块；无法识别分区时完整原文仍保留在描述中并显示警告。
+- `testdata/config.yaml` 读取 `time`/`memory` 简写或 `time_limit_ms`/`memory_limit_mb`，并读取 subtasks/cases/score/input/output。未提供 subtasks 时，全部成对测试文件按文件名自然顺序平均分配 100 分，余数给最后一点并显示警告；持久化数据集仍按系统约定的 ID 排序。每个 case 可显式覆盖 score；未覆盖时子任务分值在 cases 间均分。测试文件继续使用 ID、配对、文件/总字节、ZIP32、CRC、路径和总分校验，生成不可变摘要。
 - 单题包 ZIP 最多 32 MiB，测试点上限沿用 512 对；拒绝未知根文件、路径穿越、符号链接、ZIP64、重复成员、无引用测试文件和超限。导入在完整解析后原子创建题目/题面/数据/指针/标签/审计；失败不留下可见半成品。隐藏测试内容不返回浏览器。
 - 重复点击由客户端禁用，成功后将按钮改为打开本次题目；该保护只在当前页面有效，后端没有跨设备全局包导入幂等键。

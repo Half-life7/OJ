@@ -11,9 +11,13 @@
 
 ## 管理功能
 
-`/admin` 采用左侧导航和中栏分层工作区："管理概览、测试中心、账号管理、队列与死信、审计与重判"只在当前选中板块加载。概览链接身份、题目、比赛和社区管理页面；测试中心内部再分为“系统检查、编辑器、CSV 样例、题包导入”四个子页签，提供真实系统诊断、代码/Markdown 编辑器演示、CSV 表头样例和外部题包预览/导入；账号板块提供 ID/姓名/学号搜索、禁用/恢复和提交历史；队列板块提供死信重试与消息隔离；审计板块提供审计读取和批量重判。禁用账号同时增加 token_version 并撤销全部会话；恢复后须重新登录。本人和最后的有效超级管理员不能被禁用；已报废临时账号不能通过此接口重新启用。
+`/admin` 采用左侧导航和中栏分层工作区："管理概览、测试中心、账号管理、队列与死信、审计与重判"只在当前选中板块加载。概览链接身份、题目、比赛和社区管理页面；测试中心内部再分为“系统检查、初始化与模拟、编辑器、CSV 样例、题包导入”五个子页签。初始化与模拟页可创建明确标记的练习/比赛演示数据、按比赛或题目发起终态提交重判，并执行受固定确认词保护的全业务数据初始化；账号板块提供 ID/姓名/学号搜索、禁用/恢复和提交历史；队列板块提供死信重试与消息隔离；审计板块提供审计读取和短批次手动重判。禁用账号同时增加 token_version 并撤销全部会话；恢复后须重新登录。本人和最后的有效超级管理员不能被禁用；已报废临时账号不能通过此接口重新启用。
 
 `/api/admin/operations` 下的 users、users/:id/status、users/:id/submissions、metrics、audits、dead-letters、dead-letters/:id/retry、quarantine 全部要求当前有效的永久超级管理员。列表默认最多 100 条；users/audits/submissions 的 after 为 ID 游标，quarantine 的 after 为偏移量。后台不返回密码哈希、会话密钥或原始隔离消息。Web 不获得 Docker 权限；Runner 就绪状态经 Worker 验证，日志通过部署 CLI 查看。
+
+范围重判入口为 `POST /api/admin/operations/rejudge/problem` 和 `/rejudge/contest`，请求包含 `key`、`reason` 和唯一作用域 ID。只选择当前 generation 已终态的正式 `Submit`，比赛入口拒绝已结算比赛，单题入口排除已结算比赛中的提交。练习题的新 generation 在同一事务中改用题目当前题面/数据版本，比赛提交继续使用创建时的固定版本；任务每 100 条使用独立幂等键入队，返回排队、跳过和批次数。题目题面保存或测试数据版本发布成功后，前端自动发起题目范围重判；若保存成功但重判失败，会保留已保存版本并单独展示失败原因。
+
+`POST /api/admin/operations/simulate` 创建 3 道公开可用题目、1 场已结算比赛、36 个 active 正式账号，并为每个账号写入 24～40 条练习与比赛终态记录。模拟提交源码带 `BIUE SIMULATION` 标识，响应统一说明“不是真实 Runner 执行结果”，响应中的统一初始密码只显示一次且数据库仅保存 bcrypt 哈希。`POST /api/admin/operations/reset` 要求确认词完全等于“初始化全部业务数据”并填写原因，且在存在 Pending/Queued/Compiling/Running 任务时拒绝。数据库事务保留当前永久超级管理员、其 person/account 关系与会话、迁移表和单行准入锁，删除其他业务数据；提交成功后尽力清理 `oj:*` Redis 键和题目数据存储目录，清理失败返回明确的部分完成结果。
 
 比赛管理增加 freeze / unfreeze / bulk_status 动作。bulk_status 接受最多 500 个不重复 team_ids、status=active/withdrawn、participant_type=official/star，同事务全部成功或全部回滚。封榜快照追加至 contest_freezes，重复封榜不刷新当前快照；解封仅关闭当前记录。结算后仍能解封，超级管理员仍可授予或撤销比赛管理员，成绩与积分保持锁定。授权管理员一直查看实时成绩。普通成员仍能提交和查看本人结果，但榜单只返回冻结的成绩。
 
@@ -157,4 +161,4 @@ prune 是显式保留操作，默认保留最近 7 份，可配置 1～3650 份�
 - 应用（Web/Worker/Runner 共用）、C++17/Go/Python/Java 和 Nginx 自定义镜像均完成 linux/arm64 构建及 QEMU 启动检查；Web 的 `/ready` 连接真实数据库/Redis 通过，各语言解释器/编译器与监督程序成功启动。arm64 测试使用独立标签，不覆盖 amd64 标签；未将 QEMU 结果算成原生 arm64 整机验收。
 - 用户已选择当前没有原生服务器，原生 Ubuntu 22.04/24.04 空机安装、真实宿主机重启、跨真实服务器灾备和原生 arm64 全链路保留为待验。容器测试不代替这些平台项，生产容量/长期压力数据也未据此推断。
 
-自动化入口：`tools/check_operations.py`、`tools/check_operations_browser.cjs`、`tools/check_maintenance.py`、`tools/check_image_sources.py`、`tools/check_deploy_network.sh`、`tools/check_deployment.sh`、`tools/check_production.py`、`tools/check_restore_sessions.py`、`tools/check_https_deployment.sh`、`tools/check_arm64.sh`。网络回归脚本在 `deploy/test/Dockerfile.cli` 控制器内以 `bash /source/tools/check_deploy_network.sh` 运行，挂载只读源码到 `/source` 和本机 Docker Socket，只让真实 CLI 解析配置，修改服务的命令全部模拟。原部署链路测试仅面向显式命名的 biue-deploy5-* 项目，数据位于专用卷；生产 Web/Worker 没有 Socket。详见脚本头部参数和独立环境约束。
+自动化入口：`tools/check_operations.py`、`tools/check_operations_browser.cjs`、`tools/check_maintenance_browser.cjs`、`tools/check_maintenance.py`、`tools/check_image_sources.py`、`tools/check_deploy_network.sh`、`tools/check_deployment.sh`、`tools/check_production.py`、`tools/check_restore_sessions.py`、`tools/check_https_deployment.sh`、`tools/check_arm64.sh`。网络回归脚本在 `deploy/test/Dockerfile.cli` 控制器内以 `bash /source/tools/check_deploy_network.sh` 运行，挂载只读源码到 `/source` 和本机 Docker Socket，只让真实 CLI 解析配置，修改服务的命令全部模拟。原部署链路测试仅面向显式命名的 biue-deploy5-* 项目，数据位于专用卷；生产 Web/Worker 没有 Socket。详见脚本头部参数和独立环境约束。

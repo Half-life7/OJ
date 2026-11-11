@@ -116,7 +116,12 @@ function boot(page, responses, pathname = "/problems", search = "", options = {}
     getElementById(id) { assert.ok(elements.has(id), "missing template element: " + id); return elements.get(id); },
     createElement(tag) { return new Element(tag); },
   };
-  const window = { location: { pathname, search }, history: { replaceState() {} }, setTimeout, clearTimeout, addEventListener() {}, confirm: () => true };
+  let historyValue = "";
+  const window = {
+    location: { pathname, search, hash: "" },
+    history: { replaceState(_state, _title, next) { historyValue = next; } },
+    setTimeout, clearTimeout, addEventListener() {}, confirm: () => true,
+  };
   const context = {
     document, window, URLSearchParams, TextEncoder, TextDecoder, AbortController, FormData: TestFormData, File: TestFile,
     XMLHttpRequest: class {
@@ -147,7 +152,7 @@ function boot(page, responses, pathname = "/problems", search = "", options = {}
     },
   };
   vm.runInNewContext(script, context, { filename: "problems.js" });
-  return { elements, calls, document, window };
+  return { elements, calls, document, window, get historyValue() { return historyValue; } };
 }
 
 function inputs(root) {
@@ -289,6 +294,7 @@ test("direct paired files generate scores and upload with the current revision",
     if (url === "/api/admin/problems/7") return { data: sample };
     if (url.includes("/data-versions?")) return { data: { items: [], page: 1, limit: 20, total: 0 } };
     if (url === "/api/auth/csrf") return { data: { csrf_token: "csrf-test-token" } };
+    if (url === "/api/admin/operations/rejudge/problem") return { data: { queued: 5, skipped: 2, batches: 1, tasks: [] } };
     assert.equal(url, "/api/admin/problems/7/data-versions");
     assert.equal(options.method, "POST");
     return { data: { data_version: 1, revision: 2, case_count: 1 } };
@@ -313,6 +319,43 @@ test("direct paired files generate scores and upload with the current revision",
   assert.equal(sent.headers["Content-Type"], undefined, "browser must generate the multipart boundary");
   assert.match(ui.elements.get("problem-current-data").textContent, /v1/);
   assert.match(ui.elements.get("problem-editor-version").textContent, /修订 2/);
+  assert.match(ui.elements.get("problem-upload-message").textContent, /自动重测已排队 5 条/);
+});
+
+test("management uses independent URL-backed workspaces and automatically rejudges a saved problem", async () => {
+  const updated = { ...sample, title: "更新后的题目", revision: 2, statement_version: 2 };
+  let rejudged = false;
+  const ui = boot("admin-problems", async (url, options) => {
+    if (url === "/api/users/me") return { data: { global_role: "super_admin" } };
+    if (url.startsWith("/api/admin/problems?")) return { data: { items: [sample], page: 1, limit: 20, total: 1 } };
+    if (url === "/api/admin/problems/7" && options.method === "GET") return { data: sample };
+    if (url.includes("/data-versions?")) return { data: { items: [], page: 1, limit: 20, total: 0 } };
+    if (url === "/api/auth/csrf") return { data: { csrf_token: "csrf" } };
+    if (url === "/api/admin/problems/7" && options.method === "PUT") return { data: updated };
+    if (url === "/api/admin/operations/rejudge/problem") {
+      const input = JSON.parse(options.body);
+      assert.equal(input.problem_id, 7);
+      rejudged = true;
+      return { data: { queued: 4, skipped: 1, batches: 1, tasks: [] } };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await settle();
+  assert.equal(ui.elements.get("problem-list-workspace").hidden, false);
+  ui.elements.get("problem-nav-new").trigger("click");
+  assert.equal(ui.elements.get("problem-edit-workspace").hidden, false);
+  assert.equal(ui.elements.get("problem-list-workspace").hidden, true);
+  ui.elements.get("problem-new").trigger("click");
+  ui.elements.get("admin-problem-list").querySelectorAll("button")[0].trigger("click");
+  await settle();
+  assert.equal(ui.elements.get("problem-edit-workspace").hidden, false);
+  ui.elements.get("edit-title").value = updated.title;
+  ui.elements.get("problem-editor-form").trigger("input");
+  await ui.elements.get("problem-editor-form").trigger("submit");
+  await settle();
+  assert.equal(rejudged, true);
+  assert.match(ui.historyValue || "", /#edit-7$/);
+  assert.match(ui.elements.get("problem-editor-message").textContent, /自动重测已排队 4 条/);
 });
 
 test("score table accepts zero points but blocks invalid and all-zero totals", async () => {

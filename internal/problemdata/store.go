@@ -36,8 +36,8 @@ const maxManifestBytes = 1 << 20
 
 // Store owns a handle to a dedicated directory. Close it when the process exits.
 // Callers must not modify a dataset's slices until Write returns. The database
-// must record a returned key before exposing that version to readers. Store has
-// no deletion API: an indeterminate database commit must never delete its files.
+// must record a returned key before exposing that version to readers. Clear is
+// reserved for fully authenticated test-center initialization.
 type Store struct {
 	mu     sync.RWMutex
 	root   *os.Root
@@ -100,6 +100,52 @@ func (s *Store) Close() error {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+// Clear removes every published and incomplete version key owned by this store.
+// It does not remove unrelated files or directories from the configured root.
+func (s *Store) Clear(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, ErrUnavailable
+	}
+	if err := contextError(ctx); err != nil {
+		return 0, err
+	}
+	directory, err := s.root.Open(".")
+	if err != nil {
+		return 0, storageError(ctx)
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
+		return 0, storageError(ctx)
+	}
+	removed := 0
+	for _, entry := range entries {
+		if err := contextError(ctx); err != nil {
+			return removed, err
+		}
+		if !validHex(entry.Name(), 32) {
+			continue
+		}
+		info, err := s.root.Lstat(entry.Name())
+		if err != nil {
+			return removed, storageError(ctx)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if err := s.root.RemoveAll(entry.Name()); err != nil {
+			return removed, storageError(ctx)
+		}
+		removed++
+	}
+	if err := syncDirectory(s.root); err != nil {
+		return removed, storageError(ctx)
+	}
+	return removed, contextError(ctx)
 }
 
 // Write stages a complete version, then atomically renames its data directory.

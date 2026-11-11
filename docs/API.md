@@ -8,6 +8,8 @@
 
 Markdown 安全预览使用 `POST /api/admin/problems/markdown-preview`（超级管理员）和 `POST /api/community/preview`（已登录账号）。外部题包使用 `POST /api/admin/problems/package-preview` 与 `package-import`，采用 multipart 的 `archive` ZIP 或内置样例 `sample=1`；错误或预览不会写入题目。
 
+测试中心管理员接口为 `POST /api/admin/operations/simulate`、`POST /api/admin/operations/reset`、`POST /api/admin/operations/rejudge/problem` 与 `/rejudge/contest`。范围重判请求使用 `{key,reason,problem_id}` 或 `{key,reason,contest_id}`；初始化请求使用 `{confirmation,reason}`，确认词必须精确为 `初始化全部业务数据`。这些接口仍受登录、永久超级管理员、Origin、CSRF 和请求 ID 审计约束。
+
 批次 3 的比赛、报名、队伍、身份审核和结算接口见 [比赛 API 与规则](CONTESTS.md#页面与接口)。比赛提交沿用 `/api/submissions`、`/api/runs`，增加可选 contest_id；不接受客户端指定队伍或用户身份。
 
 本文件描述认证及相关公开 API；2D 已通过真实 MySQL/Redis、四语言 Docker 和故障恢复验收。具体检查范围与结果见 CHANGELOG.md，不把该结果扩展为生产容量或全部浏览器流程验收。

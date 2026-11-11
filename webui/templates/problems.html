@@ -35,7 +35,17 @@
 <section class="profile-heading"><div><p class="eyebrow">PROBLEM MANAGEMENT</p><h1>题目管理</h1><p>维护题面与样例，发布测试数据的新版本。</p></div><div class="page-actions"><a href="/admin#test" class="button primary">题包导入与测试</a><a href="/problems" class="button secondary">浏览公开题库</a></div></section>
 {{template "problems-state" .}}
 <div id="problem-admin" hidden>
-  <section class="admin-problem-browser">
+  <div class="contest-workspace">
+    <aside class="contest-sidebar" aria-label="题目管理工作区">
+      <button id="problem-nav-list" type="button" class="contest-nav-item active" data-problem-admin-panel="list">题目列表</button>
+      <button id="problem-nav-new" type="button" class="contest-nav-item" data-problem-admin-panel="new">创建题目</button>
+      <button id="problem-nav-edit" type="button" class="contest-nav-item" data-problem-admin-panel="edit">编辑当前题目</button>
+      <span class="contest-sidebar-label">测试数据</span>
+      <button id="problem-nav-data" type="button" class="contest-nav-item" data-problem-admin-panel="data">上传测试数据</button>
+      <button id="problem-nav-versions" type="button" class="contest-nav-item" data-problem-admin-panel="versions">数据版本</button>
+    </aside>
+    <div class="contest-content">
+  <section id="problem-list-workspace" class="admin-problem-browser" data-problem-admin-panel-content="list">
     <div class="problem-panel-heading"><h2>全部题目</h2><button id="problem-new" class="button secondary" type="button">＋ 创建题目</button></div>
     <form id="admin-filter-form" class="problem-filters" role="search" aria-label="筛选管理题目">
       <div><label for="admin-query">标题或题目 ID</label><input id="admin-query" name="q" maxlength="200" placeholder="搜索题目"></div>
@@ -48,8 +58,7 @@
     <div id="admin-problem-list" class="problem-list" aria-live="polite"></div>
     <div class="problem-pagination"><button id="admin-prev" class="button secondary" type="button">上一页</button><p id="admin-page-info" role="status" aria-live="polite"></p><button id="admin-next" class="button secondary" type="button">下一页</button></div>
   </section>
-  <div class="problem-admin-grid">
-    <section class="problem-editor profile-card">
+    <section id="problem-edit-workspace" class="problem-editor profile-card" data-problem-admin-panel-content="edit" hidden>
       <div class="problem-panel-heading"><div><span id="problem-editor-mode" class="card-number">NEW PROBLEM</span><h2 id="problem-editor-heading">创建题目</h2></div><div class="page-actions"><a id="problem-public-preview" class="button secondary" target="_blank" rel="noopener" hidden>在公共题库查看</a><button id="problem-reload" class="button secondary" type="button" hidden>重新加载此题</button></div></div>
       <p id="problem-editor-version" class="profile-note">新题默认为隐藏草稿。</p>
       <form id="problem-editor-form">
@@ -80,8 +89,7 @@
         <p id="problem-editor-message" class="form-message" role="status" aria-live="polite" hidden></p>
       </form>
     </section>
-    <aside class="problem-data-panel">
-      <section class="profile-card"><div class="card-heading"><span class="card-number">TEST DATA</span><h2>上传测试数据</h2><p>每次成功上传都会生成新版本，旧版本会保留。请先保存题面，再上传数据。</p></div>
+      <section id="problem-data-workspace" class="profile-card" data-problem-admin-panel-content="data" hidden><div class="card-heading"><span class="card-number">TEST DATA</span><h2>上传测试数据</h2><p>每次成功上传都会生成新版本，旧版本会保留。请先保存题面，再上传数据。</p></div>
         <p id="problem-upload-state" role="status">请先创建或选择已保存的题目。</p>
         <button id="problem-save-for-upload" type="button" class="button secondary" hidden>保存题面后启用上传</button>
         <form id="problem-upload-form"><fieldset id="problem-upload-fields" disabled aria-describedby="problem-upload-state">
@@ -107,8 +115,8 @@
           <div class="upload-actions"><button id="data-upload-submit" class="button primary" type="submit">上传并发布新版本</button></div>
         </fieldset><button id="data-upload-cancel" class="button secondary upload-cancel" type="button" hidden>取消上传</button><p id="problem-upload-message" class="form-message" role="status" aria-live="polite" hidden></p></form>
       </section>
-      <section id="problem-versions-panel" class="profile-card" hidden><div class="card-heading"><span class="card-number">DATA HISTORY</span><h2>数据版本</h2><p id="problem-current-data">尚未上传测试数据。</p></div><p id="problem-versions-message" class="form-message" role="status" aria-live="polite" hidden></p><button id="problem-versions-retry" class="button secondary" type="button" hidden>重新加载版本</button><div id="problem-version-list" class="problem-version-list"></div><div class="problem-pagination"><button id="version-prev" class="button secondary" type="button">上一页</button><p id="version-page-info" role="status" aria-live="polite"></p><button id="version-next" class="button secondary" type="button">下一页</button></div><div id="problem-version-detail" hidden></div></section>
-    </aside>
+      <section id="problem-versions-workspace" class="profile-card" data-problem-admin-panel-content="versions" hidden><div class="card-heading"><span class="card-number">DATA HISTORY</span><h2>数据版本</h2><p id="problem-current-data">尚未上传测试数据。</p></div><p id="problem-versions-message" class="form-message" role="status" aria-live="polite" hidden></p><button id="problem-versions-retry" class="button secondary" type="button" hidden>重新加载版本</button><div id="problem-version-list" class="problem-version-list"></div><div class="problem-pagination"><button id="version-prev" class="button secondary" type="button">上一页</button><p id="version-page-info" role="status" aria-live="polite"></p><button id="version-next" class="button secondary" type="button">下一页</button></div><div id="problem-version-detail" hidden></div></section>
+    </div>
   </div>
 </div>
 {{end}}

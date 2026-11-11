@@ -29,7 +29,8 @@ func TestRejudgeAtomicSuccessAndAuditRollback(t *testing.T) {
 			beginRejudge(m)
 			m.ExpectQuery("SELECT request_digest,tasks FROM rejudge_requests").WillReturnError(sql.ErrNoRows)
 			m.ExpectQuery("SELECT COUNT.*FROM judge_tasks").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-			m.ExpectQuery("SELECT generation,status,contest_id FROM submissions").WithArgs(uint64(9)).WillReturnRows(sqlmock.NewRows([]string{"generation", "status", "contest_id"}).AddRow(1, Accepted, nil))
+			m.ExpectQuery("SELECT problem_id,statement_version,data_version,generation,status,contest_id FROM submissions").WithArgs(uint64(9)).WillReturnRows(
+				sqlmock.NewRows([]string{"problem_id", "statement_version", "data_version", "generation", "status", "contest_id"}).AddRow(7, 3, 4, 1, Accepted, nil))
 			m.ExpectExec("INSERT INTO judge_tasks").WithArgs(uint64(9), uint64(2)).WillReturnResult(sqlmock.NewResult(10, 1))
 			m.ExpectExec("UPDATE submissions").WithArgs(uint64(2), uint64(9), uint64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 			m.ExpectExec("INSERT INTO judge_task_outbox").WithArgs(int64(10), uint64(9), uint64(2)).WillReturnResult(sqlmock.NewResult(1, 1))
@@ -84,13 +85,43 @@ func TestRejudgeReplayAndDigestConflict(t *testing.T) {
 		}
 	}
 }
+
+func TestScopedRejudgeCanMovePracticeSubmissionToLatestProblemVersions(t *testing.T) {
+	s, m := leaseFixture(t)
+	a, _ := NewJudgeAdmin(s.db, 100)
+	in := inputRejudge()
+	in.UseLatestProblem = true
+	beginRejudge(m)
+	m.ExpectQuery("SELECT request_digest,tasks FROM rejudge_requests").WillReturnError(sql.ErrNoRows)
+	m.ExpectQuery("SELECT COUNT.*FROM judge_tasks").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	m.ExpectQuery("SELECT problem_id,statement_version,data_version,generation,status,contest_id FROM submissions").WithArgs(uint64(9)).WillReturnRows(
+		sqlmock.NewRows([]string{"problem_id", "statement_version", "data_version", "generation", "status", "contest_id"}).AddRow(7, 1, 1, 1, Accepted, nil))
+	m.ExpectQuery("SELECT statement_version,data_version FROM problems").WithArgs(uint64(7)).WillReturnRows(
+		sqlmock.NewRows([]string{"statement_version", "data_version"}).AddRow(2, 2))
+	m.ExpectExec("INSERT INTO judge_tasks").WithArgs(uint64(9), uint64(2)).WillReturnResult(sqlmock.NewResult(10, 1))
+	m.ExpectExec("UPDATE submissions SET generation=\\?,statement_version=\\?,data_version=\\?").
+		WithArgs(uint64(2), uint64(2), uint64(2), uint64(9), uint64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+	m.ExpectExec("INSERT INTO judge_task_outbox").WithArgs(int64(10), uint64(9), uint64(2)).WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectExec("INSERT INTO rejudge_requests").WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectExec("INSERT INTO audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectExec("DELETE FROM global_board_cache").WillReturnResult(sqlmock.NewResult(0, 1))
+	m.ExpectCommit()
+	if tasks, err := a.Rejudge(context.Background(), 5, in); err != nil || len(tasks) != 1 {
+		t.Fatal(tasks, err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRejudgeSettledContestBlocked(t *testing.T) {
 	s, m := leaseFixture(t)
 	a, _ := NewJudgeAdmin(s.db, 100)
 	beginRejudge(m)
 	m.ExpectQuery("SELECT request_digest,tasks").WillReturnError(sql.ErrNoRows)
 	m.ExpectQuery("SELECT COUNT.*FROM judge_tasks").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	m.ExpectQuery("SELECT generation,status,contest_id").WillReturnRows(sqlmock.NewRows([]string{"generation", "status", "contest_id"}).AddRow(1, Accepted, 7))
+	m.ExpectQuery("SELECT problem_id,statement_version,data_version,generation,status,contest_id FROM submissions").WillReturnRows(
+		sqlmock.NewRows([]string{"problem_id", "statement_version", "data_version", "generation", "status", "contest_id"}).AddRow(9, 3, 4, 1, Accepted, 7))
 	m.ExpectQuery("SELECT settled_at FROM contests").WithArgs(uint64(7)).WillReturnRows(sqlmock.NewRows([]string{"settled_at"}).AddRow(time.Now()))
 	m.ExpectRollback()
 	if _, e := a.Rejudge(context.Background(), 5, inputRejudge()); e != ErrAdminConflict {

@@ -1684,6 +1684,11 @@ body[data-page="contests"] input[type="checkbox"] { display: inline-block; width
 #contest-member-option { min-height:135px; }
 .operations-workspace { margin-top:8px; }
 .operations-panel { min-height:420px; }
+.operations-rejudge-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:18px; }
+.operations-rejudge-grid form { padding:16px; border:1px solid var(--line); border-radius:8px; background:#fbfcfb; }
+.operations-credentials { width:100%; min-height:180px; font:12px/1.7 Consolas,"SFMono-Regular",monospace; }
+.danger-zone { border-color:#e2b7ad; background:#fffaf8; }
+.danger-zone .button.primary { background:var(--error); border-color:var(--error); }
 .operations-test-tabs {
   display:flex;
   flex-wrap:nowrap;
@@ -1813,6 +1818,7 @@ nav button { background: transparent; color: inherit; border: 1px solid var(--li
   .code-editor-shell.is-expanded { inset:6px; }
   .contest-panel { padding:22px 18px; }
   .operations-workspace { display:block; }
+  .operations-rejudge-grid { grid-template-columns:1fr; }
   .operations-panel { padding:22px 18px; }
   .operations-test-tabs { margin-left:-4px; margin-right:-4px; }
   .operations-test-row { grid-template-columns:1fr; }

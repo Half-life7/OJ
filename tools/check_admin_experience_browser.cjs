@@ -43,6 +43,9 @@ const local = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 600
 
     await page.locator("[data-operations-test-panel='diagnostics']").focus();
     await page.keyboard.press("ArrowRight");
+    assert.equal(await page.locator("[data-operations-test-panel='data-control']").getAttribute("aria-selected"), "true");
+    assert.equal(await page.locator("[data-operations-test-content='data-control']").isVisible(), true);
+    await page.keyboard.press("ArrowRight");
     assert.equal(await page.locator("[data-operations-test-panel='editors']").getAttribute("aria-selected"), "true");
     assert.equal(await page.locator("[data-operations-test-content='editors']").isVisible(), true);
     assert.equal(await page.locator("[data-operations-test-content]:visible").count(), 1);

@@ -3,7 +3,10 @@ package operations
 
 import (
 	"biue/internal/auth"
+	"biue/internal/competition"
 	"biue/internal/judge"
+	"biue/internal/problem"
+	"biue/internal/problemdata"
 	"biue/internal/server"
 	"context"
 	"database/sql"
@@ -24,14 +27,18 @@ var ErrConflict = errors.New("administrative state conflict")
 var ErrUnavailable = errors.New("administrative storage unavailable")
 
 type Service struct {
-	db    *sqlx.DB
-	redis *redis.Client
-	judge *judge.JudgeAdmin
+	db          *sqlx.DB
+	redis       *redis.Client
+	data        *problemdata.Store
+	problems    *problem.Service
+	competition *competition.Service
+	judge       *judge.JudgeAdmin
+	capacity    int
 }
 
-func New(db *sqlx.DB, r *redis.Client, capacity int) *Service {
+func New(db *sqlx.DB, r *redis.Client, data *problemdata.Store, problems *problem.Service, contests *competition.Service, capacity int) *Service {
 	j, _ := judge.NewJudgeAdmin(db, capacity)
-	return &Service{db: db, redis: r, judge: j}
+	return &Service{db: db, redis: r, data: data, problems: problems, competition: contests, judge: j, capacity: capacity}
 }
 func (s *Service) authorized(ctx context.Context, a auth.User) error {
 	var ok bool

@@ -2,8 +2,14 @@
 <section id="contest-center">
   <section class="profile-heading"><div><p class="eyebrow">CONTEST CENTER</p><h1>比赛中心</h1><p>在列表选择比赛，进入独立工作区查看题目、成绩与管理功能。</p></div><div class="page-actions"><a class="button secondary" href="/me">我的身份</a><span data-auth="admin" hidden><a class="button secondary" href="/admin/identities">身份管理</a><a id="contest-create-toggle" class="button primary" href="#create-contest">创建比赛</a></span></div></section>
   <p id="contest-message" role="status" aria-live="polite">正在加载…</p>
-  <section class="profile-card contest-list-card"><div class="problem-panel-heading"><div><span class="card-number">SCHEDULE</span><h2>比赛列表</h2></div><button id="contest-more" type="button" class="button secondary">加载更多</button></div><div id="contest-list" class="contest-list"></div></section>
-  <section id="contest-create" class="profile-card contest-form-card" hidden><div class="problem-panel-heading"><div><span class="card-number">CREATE OR EDIT</span><h2>比赛设置</h2><p class="profile-note">编辑只在原比赛尚未开始、未结算且修订号一致时允许。</p></div><button id="contest-create-close" class="button secondary" type="button">返回列表</button></div><form id="contest-create-form">
+  <div class="contest-workspace contest-center-workspace">
+    <aside class="contest-sidebar" aria-label="比赛中心工作区">
+      <button id="contest-nav-list" type="button" class="contest-nav-item active" data-contest-center-panel="list">比赛列表</button>
+      <button id="contest-nav-create" type="button" class="contest-nav-item" data-contest-center-panel="create">创建比赛</button>
+    </aside>
+    <div class="contest-content">
+  <section id="contest-list-workspace" class="profile-card contest-list-card" data-contest-center-panel-content="list"><div class="problem-panel-heading"><div><span class="card-number">SCHEDULE</span><h2>比赛列表</h2></div><button id="contest-more" type="button" class="button secondary">加载更多</button></div><div id="contest-list" class="contest-list"></div></section>
+  <section id="contest-create" class="profile-card contest-form-card" data-contest-center-panel-content="create" hidden><div class="problem-panel-heading"><div><span class="card-number">CREATE OR EDIT</span><h2>比赛设置</h2><p class="profile-note">编辑只在原比赛尚未开始、未结算且修订号一致时允许。</p></div><button id="contest-create-close" class="button secondary" type="button">返回列表</button></div><form id="contest-create-form">
     <input id="contest-edit-current" name="edit_current" type="hidden" value="">
     <label>比赛名称<input name="title" required maxlength="200"></label>
     <div class="problem-field-pair"><label>计分模式<select name="scoring_mode"><option>OI</option><option>ACM</option><option>IOI</option></select></label><label>报名方式<select name="enrollment_policy"><option value="open">自由报名</option><option value="admin_add">管理员添加</option></select></label></div>
@@ -13,8 +19,10 @@
     <p id="contest-end-preview" role="status"></p>
     <p id="contest-form-error" class="field-error" role="alert" hidden></p>
     <div class="contest-checkboxes"><label class="checkbox-label"><input name="approval_required" type="checkbox">报名需要审核</label><label class="checkbox-label"><input name="team_mode" type="checkbox">团队赛（管理员组队）</label></div>
-    <button class="button primary" type="submit">创建比赛</button>
+    <button id="contest-create-submit" class="button primary" type="submit">创建比赛</button>
   </form></section>
+    </div>
+  </div>
 </section>
 
 <section id="contest-detail" hidden>
@@ -53,6 +61,7 @@
         <input id="contest-manage-problem-id" name="problem_id" type="hidden"><input id="contest-manage-user-id" name="user_id" type="hidden"><input id="contest-manage-team-id" name="team_id" type="hidden"><input id="contest-manage-team-ids" name="team_ids" type="hidden"><input id="contest-manage-members" name="members" type="hidden">
         <p id="contest-manage-impact" class="manage-impact"></p><button class="button primary" type="submit">确认并执行</button>
       </form></section>
+      <section class="contest-panel profile-card" data-contest-panel-content="manage" hidden><span class="card-number">REJUDGE</span><h2>一键重测本场</h2><p>只处理当前 generation 已结束的正式提交；已结算比赛不能重测。任务按 100 条分批入队。</p><button id="contest-rejudge" class="button secondary" type="button">重测本场未结算提交</button><p id="contest-rejudge-result" class="form-message" role="status" aria-live="polite" hidden></p></section>
       <section class="contest-panel profile-card" data-contest-panel-content="import" hidden><span class="card-number">ROSTER IMPORT</span><h2>CSV 名单导入</h2><p>系统自动识别中英文表头，忽略 BOM、大小写和首尾空白。名单中没有永久账号的选手会创建比赛临时账号；学号优先挂到现有身份，用于累计比赛积分和场次。</p><div class="csv-column-help"><div><strong>username / 账号</strong><span>必需。可填写新比赛账号 ID；账号已存在时必须匹配原身份。</span></div><div><strong>display_name / 姓名</strong><span>新比赛账号必填；永久账号填写时须与既有身份一致。</span></div><div><strong>student_no / 学号</strong><span>新比赛账号必填。学号是临时账号与正式身份合并统计的关联键。</span></div><div><strong>organization / 学校或组织</strong><span>可选。挂到既有学号时必须与当前身份一致。</span></div><div><strong>team / 队伍</strong><span>可选。留空时使用账号名；个人赛每队只能一人。</span></div><div><strong>participant_type / 类型</strong><span>可选 <code>official</code> 正式或 <code>star</code> 打星，默认正式。</span></div></div><p class="field-help">示例：<code>账号,姓名,学号,队伍,类型</code>。单次最多创建 200 个新比赛账号。预览会在浏览器内一次性显示初始密码；数据库只保存密码哈希，不保存明文。未知列或两个别名映射到同一字段会拒绝。</p><input id="contest-csv-file" type="file" accept=".csv,text/csv"><form id="contest-csv-form"><label>CSV 内容<textarea name="csv" rows="9" required placeholder="账号,姓名,学号,队伍,类型&#10;exam001,张三,S001,Blue,official"></textarea></label><button class="button secondary">生成预览</button></form><div id="contest-csv-preview"></div><button id="contest-csv-confirm" class="button primary" type="button" disabled>确认导入</button><a id="contest-export" class="button secondary">导出实时成绩 CSV</a></section>
       <section class="contest-panel profile-card" data-contest-panel-content="accounts" hidden><span class="card-number">TEMPORARY ACCOUNTS</span><h2>创建临时账号</h2><p class="field-help">填写学号会优先挂到该学号已有身份，比赛积分和场次会累计到同一同学；进行中允许应急创建，结束后拒绝。</p><form id="contest-temporary-form"><label>账号 ID<input name="username" required minlength="3" maxlength="32"></label><label>显示名称<input name="display_name" required maxlength="100"></label><label>学号（推荐）<input name="student_no" maxlength="64"></label><label>学校或组织<input name="organization" maxlength="200"></label><label>初始密码<input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label><button class="button secondary">创建并加入比赛</button></form><h3>查看比赛提交</h3><form id="contest-history-form"><label>账号 ID<input name="user_id" type="number" min="1" required></label><button class="button secondary">读取提交</button></form><div id="contest-history"></div></section>
       <section class="contest-panel profile-card" data-contest-panel-content="settle" hidden><span class="card-number">SETTLEMENT</span><h2>结算比赛</h2><p>比赛结束后且全部正式提交完成评测时，生成不可变成绩快照及积分。操作会展示当前比赛标题、编号、结束时间和未完成提交风险。</p><div id="contest-settle-target" class="manage-impact"></div><button id="contest-settle" type="button" class="button primary">核对并结算比赛</button></section>
@@ -63,7 +72,16 @@
 
 {{define "identities"}}
 <section class="profile-heading"><h1>身份审核与纠错</h1><a href="/contests">比赛中心</a></section><p id="contest-message" role="status" aria-live="polite">正在加载…</p>
-<section class="profile-card"><h2>身份列表</h2><div id="identity-list"></div><button id="identity-more" type="button">加载更多</button></section>
-<section class="profile-card"><h2>审核 / 修改身份</h2><form id="identity-form"><label>身份编号<input name="id" type="number" min="1" required></label><label>当前修订号<input name="revision" type="number" min="1" required></label><label>显示名称<input name="display_name" maxlength="100" required></label><label>学号（清空则留空）<input name="student_no" maxlength="64"></label><label>学号状态<select name="student_no_status"><option value="none">未填写</option><option value="pending">待审核</option><option value="verified">通过</option><option value="rejected">驳回</option></select></label><label>学校或组织<input name="organization" maxlength="200"></label><label>操作原因<input name="reason" required maxlength="255"></label><button class="button primary">保存并记录审计</button></form></section>
-<section class="profile-card"><h2>显式关联账号</h2><p>历史比赛身份快照保留，后续结算按关联后的身份去重。</p><form id="identity-link-form"><label>账号数字编号<input name="user_id" type="number" min="1" required></label><label>原身份编号<input name="from_person_id" type="number" min="1" required></label><label>目标身份编号<input name="to_person_id" type="number" min="1" required></label><label>原因<input name="reason" required maxlength="255"></label><button class="button primary">关联账号</button></form></section>
+<div class="contest-workspace">
+  <aside class="contest-sidebar" aria-label="身份管理工作区">
+    <button id="identity-nav-list" type="button" class="contest-nav-item active" data-identity-panel="list">身份列表</button>
+    <button id="identity-nav-edit" type="button" class="contest-nav-item" data-identity-panel="edit">审核 / 修改身份</button>
+    <button id="identity-nav-link" type="button" class="contest-nav-item" data-identity-panel="link">关联账号</button>
+  </aside>
+  <div class="contest-content">
+    <section id="identity-list-workspace" class="profile-card" data-identity-panel-content="list"><h2>身份列表</h2><div id="identity-list"></div><button id="identity-more" type="button">加载更多</button></section>
+    <section id="identity-edit-workspace" class="profile-card" data-identity-panel-content="edit" hidden><h2>审核 / 修改身份</h2><form id="identity-form"><label>身份编号<input name="id" type="number" min="1" required></label><label>当前修订号<input name="revision" type="number" min="1" required></label><label>显示名称<input name="display_name" maxlength="100" required></label><label>学号（清空则留空）<input name="student_no" maxlength="64"></label><label>学号状态<select name="student_no_status"><option value="none">未填写</option><option value="pending">待审核</option><option value="verified">通过</option><option value="rejected">驳回</option></select></label><label>学校或组织<input name="organization" maxlength="200"></label><label>操作原因<input name="reason" required maxlength="255"></label><button class="button primary">保存并记录审计</button></form></section>
+    <section id="identity-link-workspace" class="profile-card" data-identity-panel-content="link" hidden><h2>显式关联账号</h2><p>历史比赛身份快照保留，后续结算按关联后的身份去重。</p><form id="identity-link-form"><label>账号数字编号<input name="user_id" type="number" min="1" required></label><label>原身份编号<input name="from_person_id" type="number" min="1" required></label><label>目标身份编号<input name="to_person_id" type="number" min="1" required></label><label>原因<input name="reason" required maxlength="255"></label><button class="button primary">关联账号</button></form></section>
+  </div>
+</div>
 {{end}}

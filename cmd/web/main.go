@@ -84,20 +84,21 @@ func run() error {
 	if err != nil {
 		return errors.New("cannot initialize templates")
 	}
+	contests := competition.New(db)
 	handler := server.New(cfg, server.Dependencies{
 		Ready: func(ctx context.Context) storage.Readiness { return storage.Check(ctx, db, client) },
 		RegisterAPI: func(r *gin.RouterGroup) {
 			svc.RegisterRoutes(r)
 			problemHTTP.RegisterRoutes(r)
 			submissionHTTP.RegisterRoutes(r)
-			competition.NewHandler(competition.New(db), svc).RegisterRoutes(r)
+			competition.NewHandler(contests, svc).RegisterRoutes(r)
 			community.NewHandler(community.New(db), svc).RegisterRoutes(r)
-			operations.NewHandler(operations.New(db, client, cfg.JudgeQueueCapacity), svc).RegisterRoutes(r)
+			operations.NewHandler(operations.New(db, client, datasets, problems, contests, cfg.JudgeQueueCapacity), svc).RegisterRoutes(r)
 		}, UI: ui, Logger: logger,
 	})
 	srv := &http.Server{
 		Addr: ":" + strconv.Itoa(cfg.Port), Handler: handler, ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
+		ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

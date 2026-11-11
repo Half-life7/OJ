@@ -36,7 +36,7 @@
       headers["Content-Type"] = "application/json";
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
+    const timer = setTimeout(() => controller.abort(), /\/operations\/(simulate|reset|rejudge\/)/.test(path) ? 120000 : 20000);
     try {
       const response = await fetch(path, {
         method, headers, credentials: "same-origin", cache: "no-store", signal: controller.signal,
@@ -259,6 +259,23 @@
     data.append("sample", "1");
     return data;
   }
+  function operationKey(prefix) {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return `${prefix}-${crypto.randomUUID()}`;
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+  function renderScopeRejudge(result) {
+    const target = $("operations-scope-rejudge-result");
+    target.replaceChildren();
+    target.append(node("p", `已排队 ${result.queued || 0} 条，跳过 ${result.skipped || 0} 条，共 ${result.batches || 0} 个批次。`, result.complete === false ? "test-fail" : "test-pass"));
+    for (const warning of result.warnings || []) target.append(node("p", warning, "test-fail"));
+    for (const task of (result.tasks || []).slice(0, 20)) {
+      const link = node("a", `提交 #${task.submission_id} · generation ${task.generation}`);
+      link.href = `/submissions/${task.submission_id}`;
+      const paragraph = node("p");
+      paragraph.append(link);
+      target.append(paragraph);
+    }
+  }
   function packageFormData() {
     if (packageSelection === "builtin") return sampleFormData();
     if (!(packageSelection instanceof File)) throw new APIError("请选择题包 ZIP，或使用内置样例。", 400);
@@ -352,6 +369,61 @@
       paragraph.append(link);
       $("operations-rejudge-result").append(paragraph);
     }
+  });
+  $("operations-simulate").onclick = (event) => run(event.target, async () => {
+    const result = await api("/api/admin/operations/simulate", "POST", {});
+    const target = $("operations-simulation-result");
+    target.replaceChildren(node("h3", "模拟数据已创建"), node("p", `${result.users} 个账号 · ${result.practice_submissions} 条题库提交 · ${result.contest_submissions} 条比赛提交。`), node("p", result.simulation_label, "test-pass"));
+    const contestLink = node("a", `打开模拟比赛 #${result.contest_id}`);
+    contestLink.href = `/contests/${result.contest_id}`;
+    target.append(contestLink);
+    for (const warning of result.warnings || []) target.append(node("p", warning, "test-fail"));
+    const credentials = node("textarea", undefined, "operations-credentials");
+    credentials.readOnly = true;
+    credentials.rows = 8;
+    credentials.value = `账号范围：${result.username_prefix}01 ～ ${result.username_prefix}${String(result.users).padStart(2, "0")}\n统一初始密码：${result.initial_password}\n\n${result.usernames.join("\n")}`;
+    target.append(node("p", "以下凭据只在本次响应中显示，请立即保存；服务端只保存密码哈希。", "field-help"), credentials);
+    $("operations-simulation-message").textContent = result.complete
+      ? "模拟完成。练习榜、比赛榜和模拟比赛已可直接验收。"
+      : "模拟数据已写入，但存在未完成步骤，请按提示核对。";
+    $("operations-simulation-message").hidden = false;
+  });
+  for (const [id, field] of [["operations-rejudge-contest", "contest_id"], ["operations-rejudge-problem", "problem_id"]]) {
+    $(id).addEventListener("submit", (event) => {
+      event.preventDefault();
+      run(event.submitter || event.target.querySelector("button"), async () => {
+        const data = Object.fromEntries(new FormData(event.target));
+        const scoped = {
+          key: operationKey(id.endsWith("contest") ? "contest" : "problem"), reason: data.reason,
+        };
+        scoped[field] = Number(data[field]);
+        const result = await api(`/api/admin/operations/rejudge/${id.endsWith("contest") ? "contest" : "problem"}`, "POST", scoped);
+        renderScopeRejudge(result);
+        $("operations-message").textContent = result.complete === false ? "范围重判部分完成；请查看批次结果。" : "范围重判已排队。";
+      });
+    });
+  }
+  $("operations-reset").addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(event.submitter || event.target.querySelector("button"), async () => {
+      const data = Object.fromEntries(new FormData(event.target));
+      if (data.confirmation !== "初始化全部业务数据") {
+        throw new APIError("确认词必须完全等于“初始化全部业务数据”。", 400);
+      }
+      if (!window.confirm("这将永久删除当前管理员以外的业务数据。确认已完成备份并继续？")) return;
+      const result = await api("/api/admin/operations/reset", "POST", data);
+      const target = $("operations-reset-result");
+      target.replaceChildren(
+        node("h3", result.complete ? "初始化完成" : "数据库已初始化，存在未完成清理"),
+        node("p", `Redis 键 ${result.redis_keys} 个 · 题目数据版本 ${result.data_versions} 个。`),
+      );
+      for (const warning of result.warnings || []) target.append(node("p", warning, "test-fail"));
+      const deleted = Object.entries(result.deleted || {}).filter(([, count]) => count > 0);
+      if (deleted.length) target.append(node("p", deleted.map(([table, count]) => `${table}: ${count}`).join("；"), "field-help"));
+      event.target.reset();
+      $("operations-message").textContent = result.complete ? "全部业务数据已初始化。" : "数据库已初始化，但部分缓存或文件清理失败；请查看结果。";
+      loaded.clear();
+    });
   });
 
   for (const button of document.querySelectorAll("[data-operations-panel]")) button.addEventListener("click", () => switchPanel(button.dataset.operationsPanel));

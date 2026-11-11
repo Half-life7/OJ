@@ -107,6 +107,38 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		v, e := h.s.judge.Rejudge(c.Request.Context(), actor(c).ID, in)
 		reply(c, v, e)
 	})
+	g.POST("/rejudge/contest", func(c *gin.Context) {
+		var in ScopeRejudgeInput
+		if !bind(c, &in) {
+			return
+		}
+		v, e := h.s.RejudgeContest(c.Request.Context(), actor(c), in)
+		reply(c, v, e)
+	})
+	g.POST("/rejudge/problem", func(c *gin.Context) {
+		var in ScopeRejudgeInput
+		if !bind(c, &in) {
+			return
+		}
+		v, e := h.s.RejudgeProblem(c.Request.Context(), actor(c), in)
+		reply(c, v, e)
+	})
+	g.POST("/reset", func(c *gin.Context) {
+		var in ResetInput
+		if !bind(c, &in) {
+			return
+		}
+		v, e := h.s.Reset(c.Request.Context(), actor(c), in, server.RequestID(c.Request.Context()))
+		reply(c, v, e)
+	})
+	g.POST("/simulate", func(c *gin.Context) {
+		var in struct{}
+		if !bind(c, &in) {
+			return
+		}
+		v, e := h.s.Simulate(c.Request.Context(), actor(c))
+		reply(c, v, e)
+	})
 	g.POST("/users/:id/status", func(c *gin.Context) {
 		id, e := number(c.Param("id"))
 		if e != nil {

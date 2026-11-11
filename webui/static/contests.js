@@ -121,17 +121,26 @@
 
   if (page === "identities") {
     let cursor = 0;
+    function switchIdentityWorkspace(name, updateHash = true) {
+      if (!["list", "edit", "link"].includes(name)) name = "list";
+      for (const candidate of ["list", "edit", "link"]) {
+        byID(`identity-${candidate}-workspace`).hidden = candidate !== name;
+        byID(`identity-nav-${candidate}`).classList.toggle("active", candidate === name);
+      }
+      if (updateHash && window.history?.replaceState) window.history.replaceState(null, "", `/admin/identities#${name}`);
+    }
     async function people() {
       const rows = await api(`/api/admin/persons?after=${cursor}`);
       for (const person of rows) {
         const button = node("button", `#${person.id} ${person.display_name} · ${person.student_no || "无学号"} · ${person.student_no_status} · 修订 ${person.revision} · ${(person.accounts || []).map((account) => `${account.username} (#${account.id})`).join(", ")}`);
         button.type = "button";
-        button.onclick = () => {
+        button.addEventListener("click", () => {
           for (const [key, value] of Object.entries(person)) {
             const input = byID("identity-form").elements.namedItem(key);
             if (input) input.value = value ?? "";
           }
-        };
+          switchIdentityWorkspace("edit");
+        });
         byID("identity-list").append(button);
         cursor = person.id;
       }
@@ -162,7 +171,11 @@
         message("contest-message", "账号身份关联已保存；既有比赛快照保持不变。", true);
       });
     };
+    byID("identity-nav-list").addEventListener("click", () => switchIdentityWorkspace("list"));
+    byID("identity-nav-edit").addEventListener("click", () => switchIdentityWorkspace("edit"));
+    byID("identity-nav-link").addEventListener("click", () => switchIdentityWorkspace("link"));
     people().then(() => message("contest-message", "请选择需要审核的身份。")).catch((error) => message("contest-message", error.message));
+    switchIdentityWorkspace((window.location.hash || "").slice(1), false);
     return;
   }
 
@@ -307,10 +320,24 @@
     return input;
   }
 
+  function switchCenterWorkspace(name, updateHash = true) {
+    if (!["list", "create"].includes(name)) name = "list";
+    if (name === "create" && (!user || user.global_role !== "super_admin" || user.account_type !== "permanent")) name = "list";
+    byID("contest-list-workspace").hidden = name !== "list";
+    byID("contest-create").hidden = name !== "create";
+    byID("contest-nav-list").classList.toggle("active", name === "list");
+    byID("contest-nav-create").classList.toggle("active", name === "create");
+    byID("contest-nav-create").disabled = !user || user.global_role !== "super_admin" || user.account_type !== "permanent";
+    if (updateHash && window.history?.replaceState) {
+      window.history.replaceState(null, "", `/contests${name === "create" ? "#create" : "#list"}`);
+    }
+  }
+
   function showCenter() {
     activePanel = "overview";
     byID("contest-detail").hidden = true;
     byID("contest-center").hidden = false;
+    switchCenterWorkspace(window.location.hash === "#create" ? "create" : "list", false);
     document.title = "比赛中心 · Biue OJ";
   }
   function setDetailBusy(busy) {
@@ -326,8 +353,7 @@
       message("contest-message", "当前账号没有创建比赛权限。");
       return;
     }
-    byID("contest-create").hidden = false;
-    byID("contest-create").scrollIntoView?.({ behavior: "smooth", block: "start" });
+    switchCenterWorkspace("create");
   }
   function switchPanel(name) {
     if (!view) return;
@@ -844,7 +870,7 @@
     }
     createForm.elements.edit_current.checked = editing;
     editingMode = editing;
-    createForm.querySelector('button[type="submit"]').textContent = editing ? "保存比赛修改" : "创建比赛";
+    byID("contest-create-submit").textContent = editing ? "保存比赛修改" : "创建比赛";
     createForm.elements.team_mode.disabled = editing;
     if (!editing) {
       createForm.reset();
@@ -918,7 +944,9 @@
     }, "contest-form-error");
   });
   byID("contest-create-toggle").addEventListener("click", (event) => { event.preventDefault(); setEditMode(false); showCreate(); });
-  byID("contest-create-close").addEventListener("click", () => { if (mayDiscard()) byID("contest-create").hidden = true; });
+  byID("contest-create-close").addEventListener("click", () => { if (mayDiscard()) switchCenterWorkspace("list"); });
+  byID("contest-nav-list").addEventListener("click", () => { if (mayDiscard()) switchCenterWorkspace("list"); });
+  byID("contest-nav-create").addEventListener("click", () => { setEditMode(false); showCreate(); });
   byID("contest-edit-current").addEventListener("change", (event) => setEditMode(event.target.checked));
   byID("contest-live-edit-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1069,6 +1097,17 @@
       message("contest-detail-message", `已在“${title}”（#${id}）完成${byID("contest-manage-action").selectedOptions[0].textContent}。`, true);
     }, "contest-detail-message");
   });
+  byID("contest-rejudge").addEventListener("click", (event) => {
+    if (!selected) return;
+    run(event.target, async () => {
+      const key = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? "contest-" + crypto.randomUUID() : `contest-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+      const result = await api("/api/admin/operations/rejudge/contest", "POST", {
+        key, reason: "从比赛工作区一键重测未结算提交", contest_id: selected.id,
+      });
+      message("contest-rejudge-result", `已排队 ${result.queued} 条，跳过 ${result.skipped} 条，共 ${result.batches} 个批次。${(result.warnings || []).join("；")}`, result.complete !== false);
+    }, "contest-rejudge-result");
+  });
   byID("contest-csv-file").addEventListener("change", async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -1178,6 +1217,8 @@
     if (Number.isSafeInteger(routeID) && routeID > 0) {
       history.replaceState({ contest: routeID }, "", `/contests/${routeID}`);
       loadDetail(routeID).catch(() => {});
+    } else {
+      switchCenterWorkspace((window.location.hash || "").slice(1), false);
     }
   });
 })();

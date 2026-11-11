@@ -19,10 +19,11 @@ type RejudgeItem struct {
 	Generation uint64 `json:"generation"`
 }
 type RejudgeInput struct {
-	RequestID string        `json:"-"`
-	Key       string        `json:"key"`
-	Reason    string        `json:"reason"`
-	Items     []RejudgeItem `json:"items"`
+	RequestID        string        `json:"-"`
+	Key              string        `json:"key"`
+	Reason           string        `json:"reason"`
+	Items            []RejudgeItem `json:"items"`
+	UseLatestProblem bool          `json:"use_latest_problem,omitempty"`
 }
 
 var requestKey = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
@@ -96,11 +97,14 @@ func (a *JudgeAdmin) Rejudge(ctx context.Context, actor uint64, in RejudgeInput)
 	tasks := make([]TaskEnvelope, 0, len(in.Items))
 	for _, item := range in.Items {
 		var current struct {
-			Generation uint64  `db:"generation"`
-			Status     Status  `db:"status"`
-			Contest    *uint64 `db:"contest_id"`
+			ProblemID        uint64  `db:"problem_id"`
+			StatementVersion uint64  `db:"statement_version"`
+			DataVersion      *uint64 `db:"data_version"`
+			Generation       uint64  `db:"generation"`
+			Status           Status  `db:"status"`
+			Contest          *uint64 `db:"contest_id"`
 		}
-		if tx.GetContext(ctx, &current, `SELECT generation,status,contest_id FROM submissions WHERE id=? FOR UPDATE`, item.ID) != nil {
+		if tx.GetContext(ctx, &current, `SELECT problem_id,statement_version,data_version,generation,status,contest_id FROM submissions WHERE id=? FOR UPDATE`, item.ID) != nil {
 			return nil, ErrAdminConflict
 		}
 		if current.Generation != item.Generation || !Terminal(current.Status) {
@@ -115,6 +119,18 @@ func (a *JudgeAdmin) Rejudge(ctx context.Context, actor uint64, in RejudgeInput)
 				return nil, ErrAdminConflict
 			}
 		}
+		statementVersion, dataVersion := current.StatementVersion, current.DataVersion
+		if in.UseLatestProblem && current.Contest == nil {
+			var latest struct {
+				StatementVersion uint64  `db:"statement_version"`
+				DataVersion      *uint64 `db:"data_version"`
+			}
+			if tx.GetContext(ctx, &latest, `SELECT statement_version,data_version FROM problems WHERE id=? FOR SHARE`, current.ProblemID) != nil ||
+				latest.StatementVersion == 0 || latest.DataVersion == nil {
+				return nil, ErrAdminConflict
+			}
+			statementVersion, dataVersion = latest.StatementVersion, latest.DataVersion
+		}
 		generation := current.Generation + 1
 		r, e := tx.ExecContext(ctx, `INSERT INTO judge_tasks(submission_id,generation,attempt,status,error_message,created_at,updated_at) VALUES (?,?,1,'Pending','',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))`, item.ID, generation)
 		if e != nil {
@@ -124,7 +140,13 @@ func (a *JudgeAdmin) Rejudge(ctx context.Context, actor uint64, in RejudgeInput)
 		if e != nil || id < 1 {
 			return nil, ErrExecutionStore
 		}
-		r, e = tx.ExecContext(ctx, `UPDATE submissions SET generation=?,status='Pending',score=0,execution_time_ms=0,memory_usage_kb=0,passed_cases=0,output='',error_message='',updated_at=UTC_TIMESTAMP(6) WHERE id=? AND generation=?`, generation, item.ID, item.Generation)
+		updateSQL := `UPDATE submissions SET generation=?,statement_version=?,data_version=?,status='Pending',score=0,execution_time_ms=0,memory_usage_kb=0,passed_cases=0,output='',error_message='',updated_at=UTC_TIMESTAMP(6) WHERE id=? AND generation=?`
+		updateArgs := []any{generation, statementVersion, dataVersion, item.ID, item.Generation}
+		if !in.UseLatestProblem || current.Contest != nil {
+			updateSQL = `UPDATE submissions SET generation=?,status='Pending',score=0,execution_time_ms=0,memory_usage_kb=0,passed_cases=0,output='',error_message='',updated_at=UTC_TIMESTAMP(6) WHERE id=? AND generation=?`
+			updateArgs = []any{generation, item.ID, item.Generation}
+		}
+		r, e = tx.ExecContext(ctx, updateSQL, updateArgs...)
 		if e != nil {
 			return nil, ErrExecutionStore
 		}

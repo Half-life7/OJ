@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -50,6 +51,28 @@ func TestParseProblemPackageZIPAndRejectUnknownFiles(t *testing.T) {
 	bad := append([]byte("MZ"), archive.Bytes()...)
 	if _, err := ParsePackageZIP(context.Background(), bad); !errors.Is(err, ErrInvalidPackage) {
 		t.Fatalf("prefix accepted: %v", err)
+	}
+}
+
+func TestParseWrappedSampleProblemPackageZIP(t *testing.T) {
+	path := filepath.Join("..", "..", "导入样例", "菲波那契数.zip")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := ParsePackageZIP(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Preview.Title != "菲波那契数" || pkg.Input.TimeLimitMS != 1000 || pkg.Input.MemoryLimitMB != 128 ||
+		len(pkg.Preview.Cases) != 10 || pkg.Preview.TotalScore != 100 || pkg.Dataset.TotalScore != 100 {
+		t.Fatalf("unexpected wrapped package: preview=%+v input=%+v", pkg.Preview, pkg.Input)
+	}
+	for index, item := range pkg.Preview.Cases {
+		want := "problem" + strconv.Itoa(index+1)
+		if item.ID != want || item.Score != 10 {
+			t.Fatalf("case %d=%+v, want id=%s score=10", index, item, want)
+		}
 	}
 }
 

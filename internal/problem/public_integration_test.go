@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -82,5 +83,20 @@ func TestPublicProblemIsImmediatelyListedWithRealMySQL(t *testing.T) {
 	}
 	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != created.ID {
 		t.Fatalf("public problem is not immediately listed: %+v", page)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "导入样例", "菲波那契数.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := ParsePackageZIP(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, err := service.ImportPackage(context.Background(), Actor{ID: 1, Role: "super_admin"}, pkg, "request-wrapped-zip")
+	if err != nil {
+		t.Fatalf("wrapped ZIP import failed: %v", err)
+	}
+	if imported.Title != "菲波那契数" || imported.DataVersion != 1 || imported.TimeLimitMS != 1000 || imported.MemoryLimitMB != 128 || len(pkg.Preview.Cases) != 10 {
+		t.Fatalf("wrapped ZIP import result: %+v", imported)
 	}
 }

@@ -102,7 +102,7 @@ class TestFormData {
   append(name, value) { this.data.set(name, value); }
 }
 
-function boot(responses, pathname = "/contests") {
+function boot(responses, pathname = "/contests", page = "contests") {
   const elements = new Map();
   for (const match of template.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
     const element = new Element(match[1]);
@@ -140,7 +140,7 @@ function boot(responses, pathname = "/contests") {
 
   const all = () => [...new Set(elements.values())];
   const document = {
-    body: { dataset: { page: "contests" } },
+    body: { dataset: { page } },
     title: "",
     getElementById(id) { assert.ok(elements.has(id), `missing template ID ${id}`); return elements.get(id); },
     createElement(tag) { return new Element(tag); },
@@ -205,6 +205,44 @@ function contest(id, title, overrides = {}) {
 function view(record) {
   return { contest: record, manager: true, frozen: false, teams: [], members: [], problems: [], problem_attempts: {}, standings: [] };
 }
+
+test("contest center keeps list and create form in separate URL-backed workspaces", async () => {
+  const ui = boot(async (url) => {
+    if (url === "/api/users/me") return { data: user };
+    if (url === "/api/contests?before=0") return { data: [contest(1, "Workspace contest")] };
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await settle();
+  assert.equal(ui.elements.get("contest-list-workspace").hidden, false);
+  assert.equal(ui.elements.get("contest-create").hidden, true);
+  ui.elements.get("contest-create-toggle").trigger("click");
+  assert.equal(ui.elements.get("contest-list-workspace").hidden, true);
+  assert.equal(ui.elements.get("contest-create").hidden, false);
+  assert.match(ui.location.href, /#create$/);
+  ui.elements.get("contest-nav-list").trigger("click");
+  assert.equal(ui.elements.get("contest-list-workspace").hidden, false);
+  assert.match(ui.location.href, /#list$/);
+});
+
+test("identity management uses separate list, edit and account-link workspaces", async () => {
+  const ui = boot(async (url) => {
+    if (url === "/api/admin/persons?after=0") return { data: [{
+      id: 7, display_name: "张三", student_no: "S007", student_no_status: "pending", organization: "Biue",
+      revision: 3, accounts: [{ id: 9, username: "student7" }],
+    }] };
+    throw new Error(`unexpected URL ${url}`);
+  }, "/admin/identities", "identities");
+  await settle();
+  assert.equal(ui.elements.get("identity-list-workspace").hidden, false);
+  assert.equal(ui.elements.get("identity-edit-workspace").hidden, true);
+  ui.elements.get("identity-list").querySelectorAll("button")[0].trigger("click");
+  assert.equal(ui.elements.get("identity-list-workspace").hidden, true);
+  assert.equal(ui.elements.get("identity-edit-workspace").hidden, false);
+  assert.equal(ui.elements.get("identity-form").elements.namedItem("id").value, 7);
+  ui.elements.get("identity-nav-link").trigger("click");
+  assert.equal(ui.elements.get("identity-link-workspace").hidden, false);
+  assert.match(ui.location.href, /#link$/);
+});
 
 test("late contest detail response cannot overwrite the latest visible contest", async () => {
   const first = contest(1, "Slow contest");

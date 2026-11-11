@@ -124,6 +124,33 @@ func TestRepeatedImportsUseIndependentImmutableVersions(t *testing.T) {
 	}
 }
 
+func TestClearRemovesOnlyOwnedVersionDirectories(t *testing.T) {
+	s, directory := newStore(t)
+	first, err := s.Write(context.Background(), example())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Write(context.Background(), example())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(directory, "operator-notes"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.Clear(context.Background())
+	if err != nil || removed != 2 {
+		t.Fatalf("removed=%d err=%v", removed, err)
+	}
+	for _, key := range []string{first, second} {
+		if _, err := s.Read(context.Background(), key); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cleared key %s remained: %v", key, err)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(directory, "operator-notes")); err != nil || !info.IsDir() {
+		t.Fatal("Clear removed an unrelated directory")
+	}
+}
+
 func TestKeyReservationCollisionCannotOverwriteExistingDirectory(t *testing.T) {
 	s, directory := newStore(t)
 	key := strings.Repeat("00", 16)

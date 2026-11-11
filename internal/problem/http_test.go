@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -416,6 +417,36 @@ func TestHTTPBuiltInPackagePreview(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 200 || ops.calls != 0 || !strings.Contains(w.Body.String(), `"title":"A+B 输入输出练习I"`) || !strings.Contains(w.Body.String(), `"total_score":100`) {
 		t.Fatalf("status=%d body=%s calls=%d", w.Code, w.Body, ops.calls)
+	}
+}
+
+func TestHTTPWrappedUserPackagePreview(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "导入样例", "菲波那契数.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := &httpOperations{}
+	_, r := httpHandler(t, ops, adminAuth())
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("archive", "菲波那契数.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = part.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "http://oj.test/api/admin/problems/package-preview", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: "session"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"title":"菲波那契数"`) ||
+		!strings.Contains(w.Body.String(), `"total_score":100`) || !strings.Contains(w.Body.String(), `"id":"problem10"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
 }
 

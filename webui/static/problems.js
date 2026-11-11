@@ -279,6 +279,7 @@
   let uploadXHR = null;
   let uploadInspectEpoch = 0;
   let scoreInputs = new Map();
+  let activeWorkspace = "list";
   const directFileLimit = 16 * 1024 * 1024;
   const directTotalLimit = 64 * 1024 * 1024;
   const archiveLimit = 32 * 1024 * 1024;
@@ -530,6 +531,32 @@ print("AC" if output.split() == expected.split() else "WA")
     return JSON.stringify([...editorFields, "tags", "problem_type", "checker_mode", "checker_source"].map(name => editor.elements.namedItem(name)?.value || ""));
   }
 
+  function workspaceRoute(name) {
+    if (selected && !["list", "new"].includes(name)) return `#${name}-${selected.id}`;
+    return `#${name}`;
+  }
+
+  function workspaceFromHash() {
+    const match = /^#(list|new|edit|data|versions)(?:-(\d+))?$/.exec(window.location.hash || "");
+    if (!match) return { name: "list", id: 0 };
+    return { name: match[1], id: Number(match[2] || 0) };
+  }
+
+  function switchWorkspace(name, updateHash = true) {
+    if (!["list", "new", "edit", "data", "versions"].includes(name)) name = "list";
+    if (!selected && ["edit", "data", "versions"].includes(name)) name = "new";
+    activeWorkspace = name;
+    const pane = name === "new" ? "edit" : name;
+    for (const candidate of ["list", "edit", "data", "versions"]) byID(`problem-${candidate}-workspace`).hidden = candidate !== pane;
+    for (const button of ["list", "new", "edit", "data", "versions"]) {
+      byID(`problem-nav-${button}`).classList.toggle("active", button === activeWorkspace);
+    }
+    if (updateHash && window.history?.replaceState) {
+      const base = `${window.location.pathname || ""}${window.location.search || ""}`;
+      window.history.replaceState(null, "", base + workspaceRoute(name));
+    }
+  }
+
   function updateControls() {
     byID("problem-editor-fields").disabled = mutationPending || !adminAllowed;
     byID("problem-upload-fields").disabled = !adminAllowed || mutationPending || !selected || dirty;
@@ -537,6 +564,8 @@ print("AC" if output.split() == expected.split() else "WA")
     byID("data-upload-submit").disabled = !adminAllowed || mutationPending || !selected || dirty || !uploadPreview?.valid;
     byID("problem-save-for-upload").hidden = !adminAllowed || mutationPending || (!!selected && !dirty);
     byID("problem-new").disabled = mutationPending;
+    byID("problem-nav-new").disabled = mutationPending;
+    for (const name of ["edit", "data", "versions"]) byID(`problem-nav-${name}`).disabled = mutationPending || !selected;
     byID("problem-reload").disabled = mutationPending;
     for (const button of byID("admin-problem-list").querySelectorAll("button")) button.disabled = mutationPending;
   }
@@ -577,7 +606,6 @@ print("AC" if output.split() == expected.split() else "WA")
     const publicPreview = byID("problem-public-preview");
     publicPreview.hidden = !problem || problem.status !== "published" || problem.visibility !== "public";
     publicPreview.href = problem ? `/problems?q=${encodeURIComponent(problem.title)}` : "/problems";
-    byID("problem-versions-panel").hidden = !problem;
     byID("problem-current-data").textContent = problem && problem.data_version ? "当前使用数据版本 v" + problem.data_version : "尚未上传测试数据。";
     byID("problem-version-detail").hidden = true;
     byID("problem-version-list").replaceChildren();
@@ -630,6 +658,7 @@ print("AC" if output.split() == expected.split() else "WA")
       const problem = await request("/api/admin/problems/" + encodeURIComponent(id));
       if (sequence !== editorEpoch) return;
       fillEditor(problem);
+      switchWorkspace("edit");
       versionPage = 1;
       loadVersions();
     } catch (error) {
@@ -758,6 +787,19 @@ print("AC" if output.split() == expected.split() else "WA")
   });
   byID("problem-markdown-preview-close").addEventListener("click", () => { byID("problem-markdown-preview").hidden = true; });
   byID("problem-save-for-upload").addEventListener("click", () => editor.requestSubmit());
+
+  function autoRejudgeKey() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return "auto-" + crypto.randomUUID();
+    return `auto-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  async function autoRejudgeProblem(id) {
+    if (!id) return null;
+    return write("/api/admin/operations/rejudge/problem", "POST", {
+      key: autoRejudgeKey(), reason: "题目编辑或测试数据发布后自动重测", problem_id: Number(id),
+    });
+  }
+
   editor.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (mutationPending) return;
@@ -770,7 +812,16 @@ print("AC" if output.split() == expected.split() else "WA")
     try {
       const problem = await write("/api/admin/problems" + (id ? "/" + encodeURIComponent(id) : ""), id ? "PUT" : "POST", input);
       fillEditor(problem);
-      message("problem-editor-message", id ? "题面已保存。" : "题目已创建，可以上传测试数据。", true);
+      switchWorkspace("edit");
+      let savedMessage = id ? "题面已保存。" : "题目已创建，可以上传测试数据。";
+      try {
+        const rejudge = await autoRejudgeProblem(problem.id);
+        savedMessage += ` 自动重测已排队 ${rejudge?.queued || 0} 条，跳过 ${rejudge?.skipped || 0} 条。`;
+        if (rejudge?.complete === false) savedMessage += " 后续批次未全部入队：" + (rejudge.warnings || []).join("；");
+      } catch (error) {
+        savedMessage += " 自动重测失败：" + error.message;
+      }
+      message("problem-editor-message", savedMessage, !savedMessage.includes("自动重测失败") && !savedMessage.includes("后续批次未全部入队"));
       versionPage = 1;
       loadVersions();
       loadList();
@@ -830,11 +881,19 @@ print("AC" if output.split() == expected.split() else "WA")
       selected = { ...selected, revision: version.revision, data_version: version.data_version };
       byID("problem-editor-version").textContent = "修订 " + selected.revision + " · 题面版本 " + selected.statement_version;
       byID("problem-current-data").textContent = "当前使用数据版本 v" + version.data_version;
-      message("problem-upload-message", "数据版本 v" + version.data_version + " 已发布，共 " + number(version.case_count) + " 个测试点。旧版本已保留。", true);
+      let uploadedMessage = "数据版本 v" + version.data_version + " 已发布，共 " + number(version.case_count) + " 个测试点。旧版本已保留。";
+      try {
+        const rejudge = await autoRejudgeProblem(id);
+        uploadedMessage += ` 自动重测已排队 ${rejudge?.queued || 0} 条，跳过 ${rejudge?.skipped || 0} 条。`;
+        if (rejudge?.complete === false) uploadedMessage += " 后续批次未全部入队：" + (rejudge.warnings || []).join("；");
+      } catch (error) {
+        uploadedMessage += " 自动重测失败：" + error.message;
+      }
       upload.reset();
       invalidateUpload();
       versionPage = 1;
       loadVersions();
+      message("problem-upload-message", uploadedMessage, !uploadedMessage.includes("自动重测失败") && !uploadedMessage.includes("后续批次未全部入队"));
     } catch (error) {
       if (error.status === 0 || error.status >= 500) {
         await reconcileUploadOutcome(id, previousRevision, previousDataVersion);
@@ -888,12 +947,23 @@ print("AC" if output.split() == expected.split() else "WA")
     if (uploadXHR) uploadXHR.abort();
   });
 
-  byID("problem-new").addEventListener("click", () => {
+  function startNewProblem() {
     if (mutationPending || !mayDiscard()) return;
     ++editorEpoch;
     ++versionEpoch;
     fillEditor(null);
+    switchWorkspace("new");
     editor.elements.namedItem("title").focus();
+  }
+  byID("problem-new").addEventListener("click", startNewProblem);
+  byID("problem-nav-list").addEventListener("click", () => switchWorkspace("list"));
+  byID("problem-nav-new").addEventListener("click", startNewProblem);
+  byID("problem-nav-edit").addEventListener("click", () => { if (selected) switchWorkspace("edit"); });
+  byID("problem-nav-data").addEventListener("click", () => { if (selected) switchWorkspace("data"); });
+  byID("problem-nav-versions").addEventListener("click", () => {
+    if (!selected) return;
+    switchWorkspace("versions");
+    loadVersions();
   });
   byID("problem-reload").addEventListener("click", () => {
     if (selected && !mutationPending && mayDiscard()) selectProblem(selected.id, true);
@@ -925,8 +995,14 @@ print("AC" if output.split() == expected.split() else "WA")
       byID("problem-state").hidden = true;
       byID("problem-admin").hidden = false;
       await loadList(1);
-      const initialID = Number(new URLSearchParams(window.location.search).get("select"));
-      if (Number.isSafeInteger(initialID) && initialID > 0) await selectProblem(initialID, true);
+      const route = workspaceFromHash();
+      const initialID = Number(new URLSearchParams(window.location.search).get("select")) || route.id;
+      if (Number.isSafeInteger(initialID) && initialID > 0) {
+        await selectProblem(initialID, true);
+        if (["data", "versions"].includes(route.name)) switchWorkspace(route.name);
+      }
+      else if (route.name === "new") startNewProblem();
+      else switchWorkspace("list");
     } catch (error) {
       state(error.status === 401 ? "请先登录超级管理员账号，再管理题目。" : error.message, false, error.status !== 401, error.status === 401);
     }
