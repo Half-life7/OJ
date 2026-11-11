@@ -303,10 +303,10 @@ func summaryRows(kind string, status judge.Status, details bool) *sqlmock.Rows {
 
 func TestOwnSubmissionListNeverSelectsSourceOrOutput(t *testing.T) {
 	f := newPersistenceFixture(t)
-	where := " FROM submissions s WHERE s.user_id = ? AND s.problem_id = ? AND s.kind = ?"
-	f.mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*)"+where)).WithArgs(uint64(7), uint64(42), "Submit").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	f.mock.ExpectQuery(regexp.QuoteMeta("SELECT "+summaryColumns+where+" ORDER BY s.id DESC LIMIT ? OFFSET ?")).WithArgs(uint64(7), uint64(42), "Submit", 20, 0).WillReturnRows(summaryRows("Submit", judge.Pending, false))
-	page, err := f.service.List(context.Background(), Actor{ID: 7, Role: "super_admin"}, ListOptions{ProblemID: 42, Kind: "Submit"})
+	where := " FROM submissions s WHERE s.user_id = ? AND s.kind = 'Submit' AND s.problem_id = ?"
+	f.mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*)"+where)).WithArgs(uint64(7), uint64(42)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	f.mock.ExpectQuery(regexp.QuoteMeta("SELECT "+summaryColumns+where+" ORDER BY s.id DESC LIMIT ? OFFSET ?")).WithArgs(uint64(7), uint64(42), 20, 0).WillReturnRows(summaryRows("Submit", judge.Pending, false))
+	page, err := f.service.List(context.Background(), Actor{ID: 7, Role: "super_admin"}, ListOptions{ProblemID: 42})
 	if err != nil {
 		t.Fatal(err)
 	}

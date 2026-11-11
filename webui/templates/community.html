@@ -7,6 +7,29 @@
 {{end}}
 
 {{define "rankings"}}
-<section class="profile-heading"><div><p class="eyebrow">LEADERBOARDS</p><h1>全局排行榜</h1><p>按身份汇总，每 30 秒刷新。数据可由 MySQL 重新计算。</p></div></section><p id="learning-message" role="status" aria-live="polite">正在加载…</p>
-<section class="profile-card"><form id="board-form"><label>排行榜<select name="kind"><option value="practice">日常解题榜</option><option value="contest">比赛积分榜</option><option value="solutions">题解发布榜</option></select></label><label>统计周期<select name="period"><option value="all">全部</option><option value="week">近 7 天</option><option value="month">近 30 天</option></select></label><button class="button primary">查看</button></form><p id="board-meta"></p><div class="contest-table-scroll"><table><thead><tr><th>排名</th><th>账号 ID</th><th>显示名称</th><th>数量 / 积分</th><th>达到时间</th></tr></thead><tbody id="board-rows"></tbody></table></div><button id="board-prev" type="button">上一页</button><button id="board-next" type="button">下一页</button></section>
+<section class="profile-heading"><div><p class="eyebrow">LEADERBOARDS</p><h1 id="ranking-heading">全局排行榜</h1><p id="ranking-intro">三类成绩并排展示；比赛积分只统计已结算的正式比赛，每 30 秒刷新。</p></div><a id="ranking-back" href="/rankings" hidden>← 返回排行榜总览</a></section>
+<p id="learning-message" role="status" aria-live="polite">正在加载…</p>
+<section id="ranking-overview" class="ranking-preview-grid" aria-label="三类排行榜">
+  <article class="profile-card ranking-preview-card" data-ranking-card="practice">
+    <span class="card-number">PRACTICE</span><h2>日常解题榜</h2><p>按身份汇总公开练习中的不同 AC 题数。</p>
+    <ol id="ranking-preview-practice" class="ranking-preview-list" aria-live="polite"></ol>
+    <a class="button secondary ranking-more" href="/rankings/practice">查看更多日常解题榜 →</a>
+  </article>
+  <article class="profile-card ranking-preview-card" data-ranking-card="contest">
+    <span class="card-number">CONTEST</span><h2>比赛积分榜</h2><p>仅统计公开且已结算的正式比赛；正式身份即使 0 场也会显示。</p>
+    <ol id="ranking-preview-contest" class="ranking-preview-list" aria-live="polite"></ol>
+    <a class="button secondary ranking-more" href="/rankings/contest">查看更多比赛积分榜 →</a>
+  </article>
+  <article class="profile-card ranking-preview-card" data-ranking-card="solutions">
+    <span class="card-number">SOLUTIONS</span><h2>题解发布榜</h2><p>按身份汇总审核通过、仍有效的公开题解覆盖题数。</p>
+    <ol id="ranking-preview-solutions" class="ranking-preview-list" aria-live="polite"></ol>
+    <a class="button secondary ranking-more" href="/rankings/solutions">查看更多题解发布榜 →</a>
+  </article>
+</section>
+<section id="ranking-detail" class="profile-card" hidden>
+  <form id="board-form" class="ranking-filter"><input name="kind" type="hidden" value="practice"><label>统计周期<select name="period"><option value="all">全部</option><option value="week">近 7 天</option><option value="month">近 30 天</option></select></label><button class="button primary">刷新榜单</button></form>
+  <p id="board-meta"></p>
+  <div class="contest-table-scroll"><table><thead><tr><th>排名</th><th>账号 ID</th><th>显示名称</th><th data-ranking-contest-only hidden>学号</th><th>数量 / 积分</th><th data-ranking-contest-only hidden>参赛场次</th><th>达到时间</th></tr></thead><tbody id="board-rows"></tbody></table></div>
+  <div class="problem-pagination"><button id="board-prev" type="button">上一页</button><button id="board-next" type="button">下一页</button></div>
+</section>
 {{end}}

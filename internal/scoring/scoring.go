@@ -35,6 +35,7 @@ type Input struct {
 type ProblemResult struct {
 	Score       int64            `json:"score"`
 	Accepted    bool             `json:"accepted"`
+	Attempts    int64            `json:"attempts"`
 	Wrong       int64            `json:"wrong"`
 	Penalty     int64            `json:"penalty"`
 	Cases       map[string]int64 `json:"cases,omitempty"`
@@ -161,6 +162,7 @@ func (OI) Calculate(in Input) ([]Row, error) {
 		r := rows[s.TeamID]
 		p := r.Problems[s.ProblemID]
 		r.Submissions++
+		p.Attempts++
 		if s.Score > p.Score {
 			r.Score += s.Score - p.Score
 			p.Score = s.Score
@@ -183,6 +185,7 @@ func (IOI) Calculate(in Input) ([]Row, error) {
 		r := rows[s.TeamID]
 		p := r.Problems[s.ProblemID]
 		r.Submissions++
+		p.Attempts++
 		for id, v := range s.Cases {
 			if p.PassedCases == nil {
 				p.PassedCases = map[string]bool{}
@@ -232,6 +235,7 @@ func (ACM) Calculate(in Input) ([]Row, error) {
 		r := rows[s.TeamID]
 		p := r.Problems[s.ProblemID]
 		r.Submissions++
+		p.Attempts++
 		if p.Accepted {
 			continue
 		}

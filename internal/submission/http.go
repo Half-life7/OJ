@@ -164,7 +164,7 @@ func (h *Handler) list(c *gin.Context) {
 			return
 		}
 	}
-	if opts.Kind != "" && !judge.ValidKind(judge.Kind(opts.Kind)) {
+	if opts.Kind != "" && opts.Kind != string(judge.Submit) {
 		respondError(c, ErrInvalid)
 		return
 	}

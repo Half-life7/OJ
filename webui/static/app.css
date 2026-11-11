@@ -1292,6 +1292,41 @@ textarea:focus-visible,select:focus-visible {
   margin-bottom:52px;
 }
 
+.problem-workspace.is-editing {
+  display:grid;
+  grid-template-columns:minmax(0,1.08fr) minmax(420px,.92fr);
+  gap:22px;
+  align-items:start;
+}
+
+.problem-workspace.is-editing>.problem-sheet {
+  position:sticky;
+  top:18px;
+  max-height:calc(100vh - 36px);
+  margin-bottom:0;
+  overflow:auto;
+}
+
+.problem-workspace.is-editing>.submission-composer {
+  position:sticky;
+  top:18px;
+  margin-bottom:0;
+}
+
+.run-io-grid {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:16px;
+  align-items:start;
+  margin-top:18px;
+}
+
+.run-output {
+  min-height:178px;
+  max-height:280px;
+  overflow:auto;
+}
+
 .source-code,.code-editor .cm-scroller {
   font:13px/1.7 Consolas,"SFMono-Regular",monospace;
 }
@@ -1435,6 +1470,12 @@ body[data-page="contests"] input[type="checkbox"] { display: inline-block; width
 .contest-list-item:last-child { border-bottom:0; }
 .contest-list-item h3 { margin:6px 0; font-size:19px; letter-spacing:-.3px; }
 .contest-list-item p { margin:0; color:var(--muted); font-size:12px; }
+.contest-list-meta { display:flex; flex-wrap:wrap; align-items:center; gap:9px; }
+.contest-state { display:inline-flex; align-items:center; min-height:22px; padding:2px 8px; border-radius:999px; font-size:10px; font-weight:600; }
+.contest-state-upcoming { background:#eef3f0; color:var(--muted); }
+.contest-state-live { background:var(--pale); color:var(--green); }
+.contest-state-ended { background:#fff1ed; color:var(--error); }
+.contest-state-settled { background:#eef3f0; color:var(--ink); }
 .contest-form-card { margin:28px 0 48px; }
 .contest-checkboxes { display:flex; flex-wrap:wrap; gap:24px; margin-top:20px; }
 .contest-detail-heading { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; margin:38px 0 26px; }
@@ -1457,6 +1498,27 @@ body[data-page="contests"] input[type="checkbox"] { display: inline-block; width
 .contest-problem-card:last-child { border-bottom:0; }
 .contest-problem-card h3 { margin:0 0 16px; }
 .contest-problem-card h4 { margin:18px 0 8px; font-size:12px; }
+.contest-problem-heading { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.contest-problem-heading h3 { margin:0; }
+.contest-problem-heading .button { margin-left:auto; }
+.contest-answer-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:20px 0 10px; }
+.contest-answer-heading p { margin:3px 0 0; }
+.contest-answer-sheet { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; margin:0 0 24px; }
+.contest-answer-item { display:flex; justify-content:space-between; align-items:center; gap:10px; min-height:48px; padding:9px 12px; border:1px solid var(--line); border-radius:7px; background:#fbfcfb; color:var(--ink); font:inherit; text-align:left; cursor:pointer; }
+.contest-answer-item:hover { border-color:#aac3b5; background:var(--pale); }
+.contest-answer-item strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.contest-answer-item span,.contest-problem-heading>span,.contest-focus-state { flex:0 0 auto; padding:2px 7px; border-radius:999px; font-size:10px; font-weight:600; }
+.contest-answer-accepted { background:var(--pale); color:var(--green); }
+.contest-answer-written { background:#fff7df; color:#8a6413; }
+.contest-answer-unwritten { background:#f1f3f2; color:var(--muted); }
+.contest-solve-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(420px,.92fr); gap:22px; align-items:start; margin-top:20px; }
+.contest-focus-statement { position:sticky; top:18px; max-height:calc(100vh - 36px); overflow:auto; padding:20px; border:1px solid var(--line); border-radius:8px; background:#fbfcfb; }
+.contest-focus-statement h2 { margin:10px 0 18px; font-size:22px; }
+.contest-focus-statement h4 { margin:18px 0 8px; font-size:12px; }
+.contest-focus-statement pre { padding:13px; border-radius:5px; background:var(--paper); white-space:pre-wrap; overflow-wrap:anywhere; }
+.contest-focus-nav { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+.contest-focus-nav .button { min-height:34px; padding:6px 10px; font-size:11px; }
+.contest-focus-state { display:inline-block; }
 .contest-filter-grid { display:grid; grid-template-columns:2fr repeat(4,minmax(120px,1fr)); gap:12px; align-items:end; margin:20px 0; }
 .contest-filter-grid label { margin:0; }
 .manage-impact { padding:13px 15px; border-left:3px solid #b8cdc2; background:#f4f8f5; color:var(--body); font-size:12px; line-height:1.8; }
@@ -1509,6 +1571,20 @@ body[data-page="contests"] input[type="checkbox"] { display: inline-block; width
 .operations-panel>.learning-list>p { margin:5px 0; font:11px/1.7 Consolas,monospace; overflow-wrap:anywhere; }
 
 .learning-list, #learning-replies { display: grid; gap: .6rem; margin: 1rem 0; }
+.ranking-preview-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; align-items:stretch; margin-bottom:52px; }
+.ranking-preview-card { display:flex; flex-direction:column; min-width:0; margin:0; }
+.ranking-preview-card h2 { margin:7px 0 8px; font-size:22px; }
+.ranking-preview-card>p { min-height:44px; color:var(--muted); font-size:12px; line-height:1.75; }
+.ranking-preview-list { display:grid; gap:1px; margin:14px 0 18px; padding:0; list-style:none; counter-reset:none; }
+.ranking-preview-row { display:grid; grid-template-columns:24px minmax(0,1fr) auto; gap:9px; align-items:center; min-height:43px; padding:7px 0; border-bottom:1px solid #edf1ee; }
+.ranking-preview-row strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.ranking-preview-rank { color:var(--muted); font:11px/1 Consolas,monospace; text-align:center; }
+.ranking-preview-value { max-width:130px; color:var(--muted); font-size:10px; text-align:right; }
+.ranking-preview-empty { padding:22px 0; color:var(--muted); font-size:11px; text-align:center; }
+.ranking-more { margin-top:auto; justify-content:center; }
+.ranking-filter { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin-bottom:18px; }
+.ranking-filter label { margin:0; }
+.ranking-filter select { min-width:180px; }
 .learning-browser-card { padding-top:22px; padding-bottom:22px; }
 .learning-filter-compact { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)) auto; gap:10px; align-items:end; margin:16px 0 10px; }
 .learning-filter-compact label { margin:0; }
@@ -1533,11 +1609,15 @@ nav button { background: transparent; color: inherit; border: 1px solid var(--li
 .field-error { color: var(--error); margin: .25rem 0 .75rem; }
 
 @media(max-width:900px) {
+  .ranking-preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .contest-workspace { grid-template-columns:180px minmax(0,1fr); gap:16px; }
   .contest-filter-grid { grid-template-columns:1fr 1fr; }
+  .problem-workspace.is-editing,.contest-solve-layout { grid-template-columns:minmax(0,1fr); }
+  .problem-workspace.is-editing>.problem-sheet,.problem-workspace.is-editing>.submission-composer,.contest-focus-statement { position:static; max-height:none; }
 }
 
 @media(max-width:680px) {
+  .ranking-preview-grid { grid-template-columns:minmax(0,1fr); }
   .learning-filter-compact { grid-template-columns:1fr 1fr; }
   .learning-filter-compact .button { grid-column:1/-1; }
   .csv-column-help { grid-template-columns:1fr; }
@@ -1553,6 +1633,12 @@ nav button { background: transparent; color: inherit; border: 1px solid var(--li
   .contest-filter-grid { grid-template-columns:1fr; }
   .contest-overview-row { grid-template-columns:1fr; gap:4px; }
   .contest-bulk-teams { grid-template-columns:1fr; }
+  .contest-answer-heading { align-items:flex-start; flex-direction:column; }
+  .contest-answer-sheet { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .contest-problem-heading .button { width:100%; margin-left:0; }
+  .contest-focus-nav .button { flex:1 1 30%; }
+  .run-io-grid { grid-template-columns:minmax(0,1fr); }
+  .run-output { min-height:130px; }
   .contest-panel { padding:22px 18px; }
   .operations-workspace { display:block; }
   .operations-panel { padding:22px 18px; }

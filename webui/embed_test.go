@@ -47,7 +47,8 @@ func TestPagesAndEmbeddedAssets(t *testing.T) {
 		{"/admin", "operations-content", "text/html"},
 		{"/static/operations.js", "/api/admin/operations", "text/javascript"},
 		{"/learning", "learning-form", "text/html"},
-		{"/rankings", "board-rows", "text/html"},
+		{"/rankings", "ranking-preview-grid", "text/html"},
+		{"/rankings/contest", "board-rows", "text/html"},
 		{"/static/community.js", "/api/community", "text/javascript"},
 		{"/contests", "contest-submit-form", "text/html"},
 		{"/contests/7", "contest-workspace", "text/html"},
@@ -82,7 +83,7 @@ func TestPageBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/unknown", "/api/users/me", "/static/", "/static/missing.js", "/templates/page.html", "/problems/0", "/problems/01", "/problems/not-a-number", "/problems/18446744073709551616", "/problems/1/more", "/problems/1%2F2", "/contests/0", "/contests/01", "/contests/no", "/contests/1/more", "/admin/problems/7", "/submissions/0", "/submissions/01", "/submissions/no", "/submissions/1/more", "/submissions/1%2F2"} {
+	for _, path := range []string{"/unknown", "/api/users/me", "/static/", "/static/missing.js", "/templates/page.html", "/rankings/other", "/rankings/contest/more", "/problems/0", "/problems/01", "/problems/not-a-number", "/problems/18446744073709551616", "/problems/1/more", "/problems/1%2F2", "/contests/0", "/contests/01", "/contests/no", "/contests/1/more", "/admin/problems/7", "/submissions/0", "/submissions/01", "/submissions/no", "/submissions/1/more", "/submissions/1%2F2"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusNotFound {

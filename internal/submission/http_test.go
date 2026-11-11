@@ -168,11 +168,11 @@ func TestHTTPStrictCreateFieldsAndCustomInput(t *testing.T) {
 
 func TestHTTPHistoryAndHiddenOutputBoundary(t *testing.T) {
 	_, r, store, _ := handlerFixture(t, permanent())
-	w := call(r, "GET", "/api/submissions?page=2&limit=10&problem_id=4&kind=Run", "", true)
-	if w.Code != 200 || store.options.ProblemID != 4 || store.options.Kind != "Run" || store.options.Page != 2 || store.actor.ID != 7 {
+	w := call(r, "GET", "/api/submissions?page=2&limit=10&problem_id=4&kind=Submit", "", true)
+	if w.Code != 200 || store.options.ProblemID != 4 || store.options.Kind != "Submit" || store.options.Page != 2 || store.actor.ID != 7 {
 		t.Fatalf("history: %d %+v", w.Code, store.options)
 	}
-	for _, path := range []string{"/api/submissions?kind=Other", "/api/submissions?limit=101", "/api/submissions?problem_id=0", "/api/submissions/no"} {
+	for _, path := range []string{"/api/submissions?kind=Run", "/api/submissions?kind=Other", "/api/submissions?limit=101", "/api/submissions?problem_id=0", "/api/submissions/no"} {
 		if w := call(r, "GET", path, "", true); w.Code != 400 {
 			t.Fatalf("%s status=%d", path, w.Code)
 		}

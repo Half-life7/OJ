@@ -117,9 +117,9 @@ func allowed(ctx context.Context, tx *sqlx.Tx, a auth.User, id uint64) error {
 	}
 	return nil
 }
-func (s *Service) List(ctx context.Context, after uint64) ([]Contest, error) {
+func (s *Service) List(ctx context.Context, before uint64) ([]Contest, error) {
 	items := []Contest{}
-	err := s.db.SelectContext(ctx, &items, `SELECT `+columns+` FROM contests WHERE id>? ORDER BY id LIMIT 100`, after)
+	err := s.db.SelectContext(ctx, &items, `SELECT `+columns+` FROM contests WHERE (?=0 OR id<?) ORDER BY id DESC LIMIT 100`, before, before)
 	return items, storageError(err)
 }
 

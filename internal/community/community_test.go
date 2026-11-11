@@ -63,15 +63,23 @@ func TestThreeBoardsAndStableTies(t *testing.T) {
 		if e != nil || !strings.Contains(q, "person_id") || !strings.Contains(q, "permanent") {
 			t.Fatal(kind, e)
 		}
+		if kind == "contest" && (!strings.Contains(q, "participations") || !strings.Contains(q, "COALESCE(f.student_no") || !strings.Contains(q, "settled_at")) {
+			t.Fatalf("contest board query does not aggregate settled participation by student number: %s", q)
+		}
 	}
 	if _, e := boardQuery("other"); e != ErrInvalid {
 		t.Fatal(e)
 	}
 	now := time.Now()
-	rows := []BoardRow{{PersonID: 1, Value: 4, Reached: now}, {PersonID: 2, Value: 4, Reached: now}, {PersonID: 3, Value: 3, Reached: now}}
+	rows := []BoardRow{{PersonID: 1, Value: 4, Reached: &now}, {PersonID: 2, Value: 4, Reached: &now}, {PersonID: 3, Value: 3, Reached: &now}}
 	assignRanks(rows)
 	if rows[0].Rank != 1 || rows[1].Rank != 1 || rows[2].Rank != 3 {
 		t.Fatal(rows)
+	}
+	rows = []BoardRow{{PersonID: 4}, {PersonID: 5}}
+	assignRanks(rows)
+	if rows[0].Rank != 1 || rows[1].Rank != 1 {
+		t.Fatalf("zero-participation formal identities should share a deterministic rank: %+v", rows)
 	}
 }
 func TestWriteRechecksAccountAndRollsBack(t *testing.T) {

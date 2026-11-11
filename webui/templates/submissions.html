@@ -7,11 +7,14 @@
     <label for="submission-language">语言</label><select id="submission-language" name="language" required></select>
     <label for="source-code">源代码</label><textarea id="source-code" name="source_code" class="source-code" rows="15" required spellcheck="false" aria-describedby="source-help"></textarea><p id="source-help" class="field-help">最多 64 KiB。运行用于自测，正式提交使用本题测试数据。</p>
     <label class="checkbox-label" for="run-use-sample"><input id="run-use-sample" type="checkbox" checked>运行时使用题目样例输入</label>
-    <label for="run-stdin">自定义运行输入</label><textarea id="run-stdin" name="stdin" rows="5" spellcheck="false" disabled aria-describedby="run-input-help"></textarea><p id="run-input-help" class="field-help">最多 64 KiB。取消勾选后可提供自定义输入，留空表示空输入。</p>
+    <div class="run-io-grid">
+      <div><label for="run-stdin">自测输入</label><textarea id="run-stdin" name="stdin" rows="7" spellcheck="false" disabled aria-describedby="run-input-help"></textarea><p id="run-input-help" class="field-help">默认显示题目样例；取消勾选后可编辑，最多 64 KiB。</p></div>
+      <div><label for="composer-output">自测输出</label><pre id="composer-output" class="sample-code run-output" aria-live="polite">运行自测后在这里显示输出。</pre></div>
+    </div>
     <div class="submission-actions"><button id="run-button" class="button secondary" type="button">运行自测</button><button id="submit-button" class="button primary" type="submit">正式提交</button></div>
   </fieldset></form>
   <p id="submission-create-message" class="form-message" role="status" aria-live="polite" hidden></p>
-  <section id="composer-result" class="submission-inline-result" hidden><div class="problem-panel-heading"><h3>最近一次结果</h3><a id="composer-result-link" href="/submissions">查看详情 →</a></div><div id="composer-result-summary" class="problem-badges" role="status" aria-live="polite"></div><p id="composer-poll-message" class="profile-note" role="status" aria-live="polite"></p><button id="composer-poll-retry" type="button" class="button secondary" hidden>重新读取状态</button><div id="composer-run-output" hidden><h4>运行输出</h4><pre id="composer-output" class="sample-code"></pre></div><div id="composer-error-box" hidden><h4>提示</h4><pre id="composer-error" class="sample-code"></pre></div></section>
+  <section id="composer-result" class="submission-inline-result" hidden><div class="problem-panel-heading"><h3>最近一次结果</h3><a id="composer-result-link" href="/submissions">查看提交详情 →</a></div><div id="composer-result-summary" class="problem-badges" role="status" aria-live="polite"></div><p id="composer-poll-message" class="profile-note" role="status" aria-live="polite"></p><button id="composer-poll-retry" type="button" class="button secondary" hidden>重新读取状态</button><div id="composer-error-box" hidden><h4>提示</h4><pre id="composer-error" class="sample-code"></pre></div></section>
 </section>
 {{end}}
 
@@ -20,8 +23,8 @@
 {{end}}
 
 {{define "submissions-list"}}
-<section class="profile-heading"><div><p class="eyebrow">YOUR SUBMISSIONS</p><h1>我的提交</h1><p>查看正式提交与自测运行的状态。</p></div><a href="/problems" class="button secondary">返回题库</a></section>
-<form id="submission-filter-form" class="problem-filters submission-filters" role="search" aria-label="筛选我的提交"><div><label for="submission-problem-filter">题目 ID</label><input id="submission-problem-filter" name="problem_id" type="number" min="1" step="1" placeholder="全部题目"></div><div><label for="submission-kind-filter">类型</label><select id="submission-kind-filter" name="kind"><option value="">全部类型</option><option value="Submit">正式提交</option><option value="Run">自测运行</option></select></div><button class="button primary" type="submit">查找记录</button></form>
+<section class="profile-heading"><div><p class="eyebrow">YOUR SUBMISSIONS</p><h1>我的提交</h1><p>这里只记录正式提交；自测输入与输出留在题目页面即时查看。</p></div><a href="/problems" class="button secondary">返回题库</a></section>
+<form id="submission-filter-form" class="problem-filters submission-filters" role="search" aria-label="筛选我的提交"><div><label for="submission-problem-filter">题目 ID</label><input id="submission-problem-filter" name="problem_id" type="number" min="1" step="1" placeholder="全部题目"></div><div><label for="submission-kind-filter">记录类型</label><select id="submission-kind-filter" name="kind"><option value="">全部正式提交</option><option value="Submit">正式提交</option></select></div><button class="button primary" type="submit">查找记录</button></form>
 {{template "submission-state" .}}
 <div id="submission-results" hidden><div id="submission-list" class="problem-list"></div><div class="problem-pagination"><button id="submission-prev" type="button" class="button secondary">上一页</button><p id="submission-page-info" role="status" aria-live="polite"></p><button id="submission-next" type="button" class="button secondary">下一页</button></div><p id="submission-list-poll" class="profile-note" role="status" aria-live="polite"></p></div>
 {{end}}

@@ -16,7 +16,15 @@ class Element {
   constructor(tag = "div") {
     this.tag = tag; this.children = []; this.handlers = new Map(); this.attributes = new Map();
     this.hidden = false; this.disabled = false; this.value = ""; this.checked = false; this._text = "";
-    this.classList = { toggle() {} };
+    const classes = new Set();
+    this.classList = {
+      toggle(name, force) {
+        if (force === undefined) force = !classes.has(name);
+        if (force) classes.add(name); else classes.delete(name);
+        return force;
+      },
+      contains(name) { return classes.has(name); },
+    };
   }
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map((child) => child.textContent).join(""); }
@@ -129,6 +137,34 @@ test("Run and Submit send distinct bodies with current source and CSRF", async (
   assert.equal(ui.calls.filter((call) => call.url === "/api/auth/csrf").length, 1);
 });
 
+test("self-test output stays inline and only formal submission exposes a record link", async () => {
+  const ui = boot("problem", composerResponses(async (url) => ({
+    data: {
+      ...pending,
+      id: url === "/api/runs" ? 30 : 31,
+      kind: url === "/api/runs" ? "Run" : "Submit",
+      status: "Accepted",
+      output: url === "/api/runs" ? "hello from run" : "",
+    },
+  })));
+  await settle();
+  ui.elements.get("problem-edit-mode").trigger("click");
+  assert.equal(ui.elements.get("problem-edit-mode").attributes.get("aria-pressed"), "true");
+  assert.equal(ui.elements.get("problem-edit-mode").textContent, "退出编辑模式");
+  ui.elements.get("source-code").value = "print('hello')";
+  await ui.elements.get("run-button").trigger("click");
+  await settle();
+  assert.equal(ui.elements.get("composer-output").textContent, "hello from run");
+  assert.equal(ui.elements.get("composer-result-link").hidden, true);
+  assert.match(ui.elements.get("composer-poll-message").textContent, /不进入“我的提交”/);
+
+  await ui.elements.get("submission-form").trigger("submit");
+  await settle();
+  assert.equal(ui.elements.get("composer-result-link").hidden, false);
+  assert.match(ui.elements.get("composer-result-link").href, /\/submissions\/31$/);
+  assert.match(ui.elements.get("composer-poll-message").textContent, /正式提交已进入提交记录/);
+});
+
 test("Composer protects account access and source/input byte limits", async () => {
   for (const user of [null, { account_type: "contest" }]) {
     const ui = boot("problem", composerResponses(async () => { throw new Error("unexpected write"); }, user));
@@ -199,9 +235,9 @@ test("Status authentication loss clears previously rendered source and stops ret
 });
 
 test("History uses encoded filters and never injects returned markup", async () => {
-  const ui = boot("submissions", async () => ({ data: { items: [{ ...pending, status: "Accepted", language: "<img src=x>" }], page: 2, limit: 20, total: 42 } }), { search: "?kind=Run&problem_id=7&page=2" });
+  const ui = boot("submissions", async () => ({ data: { items: [{ ...pending, status: "Accepted", language: "<img src=x>" }], page: 2, limit: 20, total: 42 } }), { search: "?kind=Submit&problem_id=7&page=2" });
   await settle(); const params = new URL(ui.calls[0].url, "http://test").searchParams;
-  assert.equal(params.get("kind"), "Run"); assert.equal(params.get("problem_id"), "7"); assert.equal(params.get("page"), "2");
+  assert.equal(params.get("kind"), "Submit"); assert.equal(params.get("problem_id"), "7"); assert.equal(params.get("page"), "2");
   assert.match(ui.elements.get("submission-list").textContent, /<img src=x>/);
   assert.equal(ui.elements.get("submission-prev").disabled, false); assert.equal(ui.elements.get("submission-next").disabled, false);
   assert.equal(ui.timers.size, 0);

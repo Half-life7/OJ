@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"regexp"
 	"testing"
 	"time"
 )
@@ -38,6 +39,19 @@ func TestContestAuthorizationRechecked(t *testing.T) {
 	_, err := s.Save(context.Background(), auth.User{ID: 1, GlobalRole: "super_admin"}, Contest{Title: "Contest", Mode: "OI", Policy: "open", Start: s.now().Add(time.Hour), End: s.now().Add(2 * time.Hour)})
 	if err != ErrForbidden {
 		t.Fatal(err)
+	}
+}
+
+func TestContestListUsesNewestFirstCursor(t *testing.T) {
+	s, m := fixture(t)
+	now := s.now()
+	m.ExpectQuery(regexp.QuoteMeta("SELECT "+columns+" FROM contests WHERE (?=0 OR id<?) ORDER BY id DESC LIMIT 100")).WithArgs(uint64(42), uint64(42)).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "scoring_mode", "enrollment_policy", "approval_required", "team_mode", "starts_at", "ends_at", "revision", "settled_at"}).
+			AddRow(41, "Older", "OI", "open", false, false, now, now.Add(time.Hour), 1, nil),
+	)
+	items, err := s.List(context.Background(), 42)
+	if err != nil || len(items) != 1 || items[0].ID != 41 {
+		t.Fatalf("newest-first list: %+v %v", items, err)
 	}
 }
 func TestIdentityAuditFailureRollsBack(t *testing.T) {

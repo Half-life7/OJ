@@ -140,7 +140,7 @@
   let user = null;
   let selected = null;
   let view = null;
-  let listAfter = 0;
+  let listBefore = 0;
   let detailEpoch = 0;
   let manageEpoch = 0;
   let csvState = null;
@@ -298,6 +298,7 @@
     for (const section of document.querySelectorAll("[data-contest-panel-content]")) section.hidden = section.dataset.contestPanelContent !== name;
     if (name === "manage") loadManageOptions().catch((error) => message("contest-detail-message", error.message));
     if (name === "settle") renderSettleTarget();
+    if (name === "submit") renderFocusedProblem();
   }
   function renderOverview(contest) {
     const target = byID("contest-overview");
@@ -347,6 +348,109 @@
       ? JSON.stringify(Object.fromEntries((problem.output_cases || []).map((caseID) => [caseID, ""])), null, 2)
       : "";
   }
+  function contestTeamIDs(activeOnly = false) {
+    if (!view) return [];
+    return view.teams
+      .filter((team) => !activeOnly || team.status === "active")
+      .filter((team) => view.members.some((member) => member.team_id === team.id && member.user_id === user?.id))
+      .map((team) => team.id);
+  }
+  function currentTeamStanding() {
+    if (!view) return null;
+    const ids = new Set(contestTeamIDs());
+    return view.standings.find((entry) => ids.has(entry.team_id)) || null;
+  }
+  function contestProblemState(problemID) {
+    const standing = currentTeamStanding();
+    const result = standing?.problems?.[problemID];
+    const attempts = Number(view?.problem_attempts?.[problemID] ?? result?.attempts ?? 0);
+    if (result?.accepted) return { key: "accepted", label: "通过", attempts };
+    if (attempts > 0 || Number(result?.score || 0) > 0 || Number(result?.wrong || 0) > 0) return { key: "written", label: "已写", attempts };
+    return { key: "unwritten", label: "未写", attempts };
+  }
+  function appendContestStatement(target, problem) {
+    target.append(node("span", `#${problem.problem_id} · 题面 v${problem.statement_version}`, "problem-number"));
+    target.append(node("h2", problem.statement.title || "题目"));
+    for (const [key, label, htmlKey] of [["description", "题面", "description_html"], ["input_format", "输入", "input_format_html"], ["output_format", "输出", "output_format_html"], ["sample_input", "样例输入", ""], ["sample_output", "样例输出", ""]]) {
+      if (problem.statement[htmlKey]) {
+        const prose = node("div", undefined, "learning-prose");
+        prose.innerHTML = problem.statement[htmlKey];
+        target.append(node("h4", label), prose);
+      } else if (problem.statement[key]) {
+        target.append(node("h4", label), node("pre", problem.statement[key]));
+      }
+    }
+  }
+  function renderAnswerSheet() {
+    const sheet = byID("contest-answer-sheet");
+    sheet.replaceChildren();
+    if (!view.problems.length) {
+      sheet.append(node("p", "当前没有可展示的比赛题目。", "problem-empty"));
+      byID("contest-answer-summary").textContent = "尚未绑定题目，或比赛开始前题面仍隐藏。";
+      return;
+    }
+    let written = 0, accepted = 0;
+    for (const problem of view.problems) {
+      const state = contestProblemState(problem.problem_id);
+      if (state.key !== "unwritten") written++;
+      if (state.key === "accepted") accepted++;
+      const button = node("button", undefined, `contest-answer-item contest-answer-${state.key}`);
+      button.type = "button";
+      button.append(node("strong", `${problem.problem_id}. ${problem.statement.title || "题目"}`), node("span", state.label));
+      button.setAttribute("aria-label", `${problem.problem_id} 题${state.label}，进入单题答题`);
+      button.addEventListener("click", () => focusContestProblem(problem.problem_id));
+      sheet.append(button);
+    }
+    byID("contest-answer-summary").textContent = `本人：已写 ${written} 题 · 通过 ${accepted} 题 · 未写 ${view.problems.length - written} 题；Run 不计入答题卡。`;
+  }
+  function renderFocusedProblem(problemID = Number(byID("contest-problem-select").value)) {
+    const target = byID("contest-focus-statement");
+    target.replaceChildren();
+    byID("contest-submission-result").replaceChildren();
+    const problem = view?.problems.find((item) => item.problem_id === Number(problemID));
+    if (!problem) {
+      target.append(node("p", "请从左侧“比赛题目”选择一道题。", "profile-note"));
+      byID("contest-problem-prev").disabled = true;
+      byID("contest-problem-next").disabled = true;
+      updateContestSubmissionAvailability();
+      return;
+    }
+    if (byID("contest-problem-select").value !== String(problem.problem_id)) byID("contest-problem-select").value = String(problem.problem_id);
+    const index = view.problems.findIndex((item) => item.problem_id === problem.problem_id);
+    const state = contestProblemState(problem.problem_id);
+    const status = node("span", state.label, `contest-focus-state contest-answer-${state.key}`);
+    target.append(status);
+    appendContestStatement(target, problem);
+    byID("contest-problem-prev").disabled = index <= 0;
+    byID("contest-problem-next").disabled = index < 0 || index >= view.problems.length - 1;
+    contestLanguageControls();
+    updateContestSubmissionAvailability();
+  }
+  function focusContestProblem(problemID) {
+    if (!view?.problems.some((problem) => problem.problem_id === Number(problemID))) return;
+    byID("contest-problem-select").value = String(problemID);
+    activePanel = "submit";
+    switchPanel("submit");
+    renderFocusedProblem(problemID);
+  }
+  function updateContestSubmissionAvailability() {
+    if (!selected || !view) return;
+    const now = new Date();
+    const inWindow = new Date(selected.starts_at) <= now && now < new Date(selected.ends_at);
+    const member = contestTeamIDs(true).length > 0;
+    const hasProblem = view.problems.length > 0;
+    const disabled = !inWindow || !member || !hasProblem;
+    byID("contest-submit-button").disabled = disabled;
+    byID("contest-submit-state").textContent = new Date(selected.ends_at) <= now
+      ? "比赛已结束，可以查看题面和本人成绩，但不能再提交。"
+      : new Date(selected.starts_at) > now
+        ? "比赛尚未开始，题面与提交将在开始后开放。"
+        : !member
+          ? "当前账号不在本场比赛名单中，不能提交。"
+          : !hasProblem
+            ? "本比赛尚未绑定可提交题目。"
+            : "正式提交会进入比赛记录并参与计分。";
+  }
   function renderDetail() {
     const contest = view.contest;
     document.title = `${contest.title} · Biue OJ`;
@@ -361,24 +465,25 @@
     byID("contest-problem-select").replaceChildren();
     for (const problem of view.problems) {
       const article = node("article", undefined, "contest-problem-card");
-      article.append(node("h3", `${problem.problem_id}. ${problem.statement.title || "题目"}`));
-      for (const [key, label, htmlKey] of [["description", "题面", "description_html"], ["input_format", "输入", "input_format_html"], ["output_format", "输出", "output_format_html"], ["sample_input", "样例输入", ""], ["sample_output", "样例输出", ""]]) {
-        if (problem.statement[htmlKey]) {
-          const prose = node("div", undefined, "learning-prose");
-          prose.innerHTML = problem.statement[htmlKey];
-          article.append(node("h4", label), prose);
-        } else if (problem.statement[key]) {
-          article.append(node("h4", label), node("pre", problem.statement[key]));
-        }
-      }
+      const heading = node("div", undefined, "contest-problem-heading");
+      const state = contestProblemState(problem.problem_id);
+      heading.append(node("h3", `${problem.problem_id}. ${problem.statement.title || "题目"}`), node("span", state.label, `contest-answer-${state.key}`));
+      const focus = node("button", "进入单题答题", "button secondary");
+      focus.type = "button";
+      focus.addEventListener("click", () => focusContestProblem(problem.problem_id));
+      heading.append(focus);
+      article.append(heading);
+      appendContestStatement(article, problem);
       byID("contest-problems").append(article);
       const option = node("option", `${problem.problem_id}. ${problem.statement.title || "题目"}`);
       option.value = problem.problem_id;
       byID("contest-problem-select").append(option);
     }
+    renderAnswerSheet();
+    renderFocusedProblem();
     contestLanguageControls();
     renderRoster();
-    const teamIDs = new Set(view.teams.filter((team) => view.members.some((member) => member.team_id === team.id && member.user_id === user?.id)).map((team) => team.id));
+    const teamIDs = new Set(contestTeamIDs());
     byID("contest-my-status").textContent = teamIDs.size
       ? `你在本比赛中的身份：${view.teams.filter((team) => teamIDs.has(team.id)).map((team) => `${team.name}（${team.participant_type} / ${team.status}）`).join("，")}`
       : contest.team_mode ? "本比赛为管理员组队；如名单没有你，请联系比赛管理员。" : "当前账号尚未报名。";
@@ -442,7 +547,10 @@
       if (sequence === detailEpoch) {
         detailLoading = false;
         setDetailBusy(!selected);
-        if (selected) renderLiveEdit();
+        if (selected) {
+          renderLiveEdit();
+          updateContestSubmissionAvailability();
+        }
         byID("contest-csv-confirm").disabled = !csvState;
         for (const button of document.querySelectorAll(".contest-nav-item")) button.disabled = false;
       }
@@ -458,20 +566,25 @@
   }
   async function list(more = false) {
     if (!more) {
-      listAfter = 0;
+      listBefore = 0;
       byID("contest-list").replaceChildren();
     }
-    const items = await api(`/api/contests?after=${listAfter}`);
+    const items = await api(`/api/contests?before=${listBefore}`);
     for (const contest of items) {
       const card = node("article", undefined, "contest-list-item");
       const copy = node("div");
-      copy.append(node("span", `#${contest.id} · ${contest.scoring_mode}`, "problem-number"), node("h3", contest.title), node("p", `${date(contest.starts_at)} — ${date(contest.ends_at)}`));
+      const now = new Date();
+      const state = contest.settled_at ? "已结束 · 已结算" : new Date(contest.ends_at) <= now ? "已结束" : new Date(contest.starts_at) > now ? "赛前" : "进行中";
+      const stateKey = contest.settled_at ? "settled" : new Date(contest.ends_at) <= now ? "ended" : new Date(contest.starts_at) > now ? "upcoming" : "live";
+      const meta = node("div", undefined, "contest-list-meta");
+      meta.append(node("span", `#${contest.id} · ${contest.scoring_mode}`, "problem-number"), node("span", state, `contest-state contest-state-${stateKey}`));
+      copy.append(meta, node("h3", contest.title), node("p", `${date(contest.starts_at)} — ${date(contest.ends_at)}`));
       const button = node("button", "进入比赛", "button primary");
       button.type = "button";
       button.addEventListener("click", () => run(button, () => openContest(contest.id), "contest-message"));
       card.append(copy, button);
       byID("contest-list").append(card);
-      listAfter = contest.id;
+      listBefore = contest.id;
     }
     if (!items.length && !more) byID("contest-list").append(node("p", "暂时没有可见比赛。", "problem-empty"));
     byID("contest-more").hidden = items.length < 100;
@@ -730,7 +843,16 @@
     if (Number.isSafeInteger(id) && id > 0) loadDetail(id).catch(() => {});
     else showCenter();
   });
-  byID("contest-problem-select").addEventListener("change", contestLanguageControls);
+  byID("contest-problem-select").addEventListener("change", () => renderFocusedProblem());
+  for (const id of ["contest-problem-one-page", "contest-problem-list"]) byID(id).addEventListener("click", () => switchPanel("problems"));
+  byID("contest-problem-prev").addEventListener("click", () => {
+    const index = view?.problems.findIndex((problem) => problem.problem_id === Number(byID("contest-problem-select").value)) ?? -1;
+    if (index > 0) renderFocusedProblem(view.problems[index - 1].problem_id);
+  });
+  byID("contest-problem-next").addEventListener("click", () => {
+    const index = view?.problems.findIndex((problem) => problem.problem_id === Number(byID("contest-problem-select").value)) ?? -1;
+    if (index >= 0 && index + 1 < view.problems.length) renderFocusedProblem(view.problems[index + 1].problem_id);
+  });
   byID("contest-submit-form").elements.language.addEventListener("change", () => contestSourceEditor?.setLanguage(byID("contest-submit-form").elements.language.value));
   for (const id of ["contest-search", "contest-filter-type", "contest-filter-status", "contest-filter-account", "contest-filter-submissions"]) byID(id).addEventListener("input", renderRoster);
   byID("contest-manage-action").addEventListener("change", syncManageFields);
@@ -850,6 +972,9 @@
       data.contest_id = id;
       data.problem_id = Number(data.problem_id);
       const submission = await api("/api/submissions", "POST", data);
+      await loadDetail(id);
+      activePanel = "submit";
+      switchPanel("submit");
       const link = node("a", `查看提交 #${submission.id}`);
       link.href = `/submissions/${submission.id}`;
       byID("contest-submission-result").replaceChildren(link);

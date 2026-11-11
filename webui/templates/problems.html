@@ -16,17 +16,19 @@
 {{end}}
 
 {{define "problem-detail"}}
-<section class="profile-heading"><div><p class="eyebrow">PROBLEM</p><h1 id="problem-title">题目详情</h1><p><a href="/problems">← 返回题库</a></p></div></section>
+<section class="profile-heading"><div><p class="eyebrow">PROBLEM</p><h1 id="problem-title">题目详情</h1><p><a href="/problems">← 返回题库</a></p></div><div class="page-actions"><button id="problem-edit-mode" class="button secondary" type="button" aria-pressed="false">开启编辑模式</button></div></section>
 {{template "problems-state" .}}
-<article id="problem-detail" class="problem-sheet" hidden>
-  <div id="problem-metadata" class="problem-badges" aria-label="题目属性"></div>
-  <div id="problem-tags" class="problem-badges" aria-label="题目标签"></div>
-  <section><h2>题目描述</h2><div id="problem-description" class="problem-prose learning-prose"></div></section>
-  <section><h2>输入格式</h2><div id="problem-input-format" class="problem-prose learning-prose"></div></section>
-  <section><h2>输出格式</h2><div id="problem-output-format" class="problem-prose learning-prose"></div></section>
-  <section class="problem-samples"><div><h2>样例输入</h2><pre id="problem-sample-input" class="sample-code"></pre></div><div><h2>样例输出</h2><pre id="problem-sample-output" class="sample-code"></pre></div></section>
-</article>
-{{template "submission-composer" .}}
+<div id="problem-workspace" class="problem-workspace">
+  <article id="problem-detail" class="problem-sheet" hidden>
+    <div id="problem-metadata" class="problem-badges" aria-label="题目属性"></div>
+    <div id="problem-tags" class="problem-badges" aria-label="题目标签"></div>
+    <section><h2>题目描述</h2><div id="problem-description" class="problem-prose learning-prose"></div></section>
+    <section><h2>输入格式</h2><div id="problem-input-format" class="problem-prose learning-prose"></div></section>
+    <section><h2>输出格式</h2><div id="problem-output-format" class="problem-prose learning-prose"></div></section>
+    <section class="problem-samples"><div><h2>样例输入</h2><pre id="problem-sample-input" class="sample-code"></pre></div><div><h2>样例输出</h2><pre id="problem-sample-output" class="sample-code"></pre></div></section>
+  </article>
+  {{template "submission-composer" .}}
+</div>
 {{end}}
 
 {{define "problems-admin"}}

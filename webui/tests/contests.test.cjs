@@ -202,7 +202,7 @@ function contest(id, title, overrides = {}) {
   };
 }
 function view(record) {
-  return { contest: record, manager: true, frozen: false, teams: [], members: [], problems: [], standings: [] };
+  return { contest: record, manager: true, frozen: false, teams: [], members: [], problems: [], problem_attempts: {}, standings: [] };
 }
 
 test("late contest detail response cannot overwrite the latest visible contest", async () => {
@@ -210,7 +210,7 @@ test("late contest detail response cannot overwrite the latest visible contest",
   const second = contest(2, "Latest contest");
   const ui = boot(async (url) => {
     if (url === "/api/users/me") return { data: user };
-    if (url === "/api/contests?after=0") return { data: [first, second] };
+    if (url === "/api/contests?before=0") return { data: [first, second] };
     if (url === "/api/contests/1") { await new Promise((resolve) => setTimeout(resolve, 30)); return { data: view(first) }; }
     if (url === "/api/contests/2") return { data: view(second) };
     throw new Error(`unexpected URL ${url}`);
@@ -230,7 +230,7 @@ test("CSV preview becomes unusable after switching contests", async () => {
   const second = contest(2, "Roster B");
   const ui = boot(async (url, options) => {
     if (url === "/api/users/me") return { data: user };
-    if (url === "/api/contests?after=0") return { data: [first, second] };
+    if (url === "/api/contests?before=0") return { data: [first, second] };
     if (url === "/api/contests/1") return { data: view(first) };
     if (url === "/api/contests/2") return { data: view(second) };
     if (url === "/api/auth/csrf") return { data: { csrf_token: "csrf" } };
@@ -251,4 +251,33 @@ test("CSV preview becomes unusable after switching contests", async () => {
   assert.equal(ui.elements.get("contest-title").textContent, "Roster B");
   assert.equal(ui.elements.get("contest-csv-confirm").disabled, true);
   assert.match(ui.elements.get("contest-csv-preview").textContent, /重新生成/);
+});
+
+test("answer sheet marks formal submissions and opens the focused problem editor", async () => {
+  const record = contest(7, "Answer sheet", { starts_at: "2026-01-01T00:00:00Z", ends_at: "2026-01-01T02:00:00Z" });
+  const current = view(record);
+  current.teams = [{ id: 10, name: "Solo", participant_type: "official", status: "active" }];
+  current.members = [{ team_id: 10, user_id: user.id, person_id: 1, identity: { Username: "admin", Name: "Admin" } }];
+  current.problems = [
+    { problem_id: 1, statement_version: 2, data_version: 3, statement: { title: "Written", description: "Written statement", description_html: "<p>Written statement</p>" } },
+    { problem_id: 2, statement_version: 2, data_version: 3, statement: { title: "Open", description: "Open statement", description_html: "<p>Open statement</p>" } },
+  ];
+  current.problem_attempts = { 1: 1, 2: 0 };
+  current.standings = [{ team_id: 10, rank: 1, submissions: 1, problems: { 1: { attempts: 1, accepted: false, score: 0 }, 2: { attempts: 0, accepted: false, score: 0 } } }];
+  const ui = boot(async (url) => {
+    if (url === "/api/users/me") return { data: user };
+    if (url === "/api/contests?before=0") return { data: [record] };
+    if (url === "/api/contests/7") return { data: current };
+    throw new Error(`unexpected URL ${url}`);
+  }, "/contests/7");
+  await settle();
+  assert.match(ui.elements.get("contest-list").textContent, /已结束/);
+  assert.equal(ui.elements.get("contest-submit-button").disabled, true);
+  assert.match(ui.elements.get("contest-answer-sheet").textContent, /1\. Written已写/);
+  assert.match(ui.elements.get("contest-answer-sheet").textContent, /2\. Open未写/);
+  const answer = ui.elements.get("contest-answer-sheet").querySelectorAll("button")[1];
+  answer.trigger("click");
+  await settle();
+  assert.match(ui.elements.get("contest-focus-statement").children.map((child) => child.innerHTML).join(""), /Open statement/);
+  assert.equal(ui.elements.get("contest-problem-select").value, "2");
 });

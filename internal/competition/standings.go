@@ -32,13 +32,14 @@ type ProblemView struct {
 	Statement        json.RawMessage `db:"snapshot_json" json:"statement"`
 }
 type View struct {
-	Frozen    bool          `json:"frozen"`
-	Contest   Contest       `json:"contest"`
-	Manager   bool          `json:"manager"`
-	Teams     []Team        `json:"teams"`
-	Members   []Member      `json:"members"`
-	Problems  []ProblemView `json:"problems"`
-	Standings []scoring.Row `json:"standings"`
+	Frozen          bool             `json:"frozen"`
+	Contest         Contest          `json:"contest"`
+	Manager         bool             `json:"manager"`
+	Teams           []Team           `json:"teams"`
+	Members         []Member         `json:"members"`
+	Problems        []ProblemView    `json:"problems"`
+	ProblemAttempts map[uint64]int64 `json:"problem_attempts"`
+	Standings       []scoring.Row    `json:"standings"`
 }
 
 func loadContest(ctx context.Context, tx *sqlx.Tx, id uint64) (Contest, error) {
@@ -133,7 +134,7 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 		return View{}, storageError(err)
 	}
 	manager := err == nil
-	v := View{Contest: c, Manager: manager, Teams: []Team{}, Members: []Member{}, Problems: []ProblemView{}, Standings: []scoring.Row{}}
+	v := View{Contest: c, Manager: manager, Teams: []Team{}, Members: []Member{}, Problems: []ProblemView{}, ProblemAttempts: map[uint64]int64{}, Standings: []scoring.Row{}}
 	var member bool
 	if err = tx.GetContext(ctx, &member, `SELECT EXISTS(SELECT 1 FROM contest_team_members WHERE contest_id=? AND user_id=?)`, id, a.ID); err != nil {
 		return v, ErrUnavailable
@@ -146,6 +147,16 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 	}
 	if err = tx.SelectContext(ctx, &v.Members, `SELECT team_id,user_id,person_id,identity_snapshot FROM contest_team_members WHERE contest_id=? ORDER BY team_id,user_id`, id); err != nil {
 		return v, ErrUnavailable
+	}
+	var attempts []struct {
+		Problem uint64 `db:"problem_id"`
+		Count   int64  `db:"attempts"`
+	}
+	if err = tx.SelectContext(ctx, &attempts, `SELECT s.problem_id,COUNT(*) AS attempts FROM submissions s JOIN contest_team_members m ON m.contest_id=s.contest_id AND m.team_id=s.contest_team_id WHERE s.contest_id=? AND m.user_id=? AND s.kind='Submit' GROUP BY s.problem_id`, id, a.ID); err != nil {
+		return v, ErrUnavailable
+	}
+	for _, attempt := range attempts {
+		v.ProblemAttempts[attempt.Problem] = attempt.Count
 	}
 	if manager || !s.now().Before(c.Start) {
 		if err = tx.SelectContext(ctx, &v.Problems, `SELECT cp.problem_id,cp.statement_version,cp.data_version,pv.snapshot_json FROM contest_problems cp JOIN problem_versions pv ON pv.problem_id=cp.problem_id AND pv.version=cp.statement_version WHERE cp.contest_id=? ORDER BY cp.problem_id`, id); err != nil {

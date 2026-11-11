@@ -93,7 +93,11 @@ func (s *Service) Identity(ctx context.Context, a auth.User, id uint64, in Ident
 		if _, err := tx.ExecContext(ctx, `INSERT INTO student_no_history(person_id,old_student_no,new_student_no,old_status,new_status,actor_user_id,reason,created_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(6))`, id, old.Student, in.Student, old.Status, in.Status, a.ID, in.Reason); err != nil {
 			return err
 		}
-		return audit(ctx, tx, a.ID, "identity.update", "person", id, map[string]any{"before": old, "after": in})
+		if err := audit(ctx, tx, a.ID, "identity.update", "person", id, map[string]any{"before": old, "after": in}); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM global_board_cache`)
+		return err
 	})
 }
 

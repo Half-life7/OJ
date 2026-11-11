@@ -102,27 +102,81 @@
     return;
   }
   if (page === "rankings") {
+    const rankingKinds = { practice: "日常解题榜", contest: "比赛积分榜", solutions: "题解发布榜" };
+    const rawKind = window.location.pathname.split("/")[2] || "";
+    if (!Object.hasOwn(rankingKinds, rawKind)) {
+      const labels = { practice: "不同 AC 题数", contest: "累计积分", solutions: "有效题解数" };
+      let refreshTimer;
+      const previewEpoch = { practice: 0, contest: 0, solutions: 0 };
+      async function renderPreview(kind) {
+        const sequence = ++previewEpoch[kind];
+        const target = byID(`ranking-preview-${kind}`);
+        target.replaceChildren(node("li", "正在加载…", "ranking-preview-empty"));
+        try {
+          const board = await api(`/api/leaderboards/${encodeURIComponent(kind)}?page=1&period=all`);
+          if (disposed || sequence !== previewEpoch[kind]) return;
+          target.replaceChildren();
+          for (const row of (board.items || []).slice(0, 5)) {
+            const li = node("li", undefined, "ranking-preview-row");
+            li.append(node("span", row.rank, "ranking-preview-rank"), node("strong", row.display_name || row.username), node("span", `${row.value} ${labels[kind]}${kind === "contest" ? ` · ${row.participations || 0} 场` : ""}`, "ranking-preview-value"));
+            target.append(li);
+          }
+          if (!board.items?.length) target.append(node("li", kind === "contest" ? "暂无有效正式身份" : "暂无上榜记录", "ranking-preview-empty"));
+        } catch (error) {
+          if (disposed || sequence !== previewEpoch[kind]) return;
+          target.replaceChildren(node("li", error.message, "ranking-preview-empty"));
+        }
+      }
+      async function refreshPreviews() {
+        await Promise.allSettled(Object.keys(rankingKinds).map(renderPreview));
+        showMessage("三个榜单每 30 秒自动刷新；点击“查看更多”进入完整榜单。");
+      }
+      refreshPreviews();
+      refreshTimer = setInterval(() => { if (!document.hidden) refreshPreviews(); }, 30000);
+      window.addEventListener("pagehide", () => clearInterval(refreshTimer));
+      return;
+    }
+
+    const detail = byID("ranking-detail");
+    const overview = byID("ranking-overview");
+    const form = byID("board-form");
+    detail.hidden = false;
+    overview.hidden = true;
+    byID("ranking-back").hidden = false;
+    byID("ranking-heading").textContent = rankingKinds[rawKind];
+    byID("ranking-intro").textContent = rawKind === "contest"
+      ? "按学号汇总身份；只统计公开且已结算的正式比赛，正式用户的 0 场记录也会显示。"
+      : "按身份汇总，每 30 秒刷新。数据可由 MySQL 重新计算。";
+    document.title = `${rankingKinds[rawKind]} · Biue OJ`;
+    form.elements.kind.value = rawKind;
+    for (const item of document.querySelectorAll("[data-ranking-contest-only]")) item.hidden = rawKind !== "contest";
+
     let currentPage = 1;
     let epoch = 0;
     async function load(requestedPage = currentPage) {
       const sequence = ++epoch;
-      const kind = byID("board-form").elements.kind.value;
-      const period = byID("board-form").elements.period.value;
+      const kind = form.elements.kind.value;
+      const period = form.elements.period.value;
       const board = await api(`/api/leaderboards/${encodeURIComponent(kind)}?page=${requestedPage}&period=${encodeURIComponent(period)}`);
-      if (disposed || sequence !== epoch || kind !== byID("board-form").elements.kind.value || period !== byID("board-form").elements.period.value) return;
+      if (disposed || sequence !== epoch || kind !== form.elements.kind.value || period !== form.elements.period.value) return;
       currentPage = requestedPage;
       byID("board-rows").replaceChildren();
       for (const row of board.items) {
         const tr = node("tr");
-        for (const value of [row.rank, row.username, row.display_name, row.value, new Date(row.reached_at).toLocaleString()]) tr.append(node("td", value));
+        const values = [row.rank, row.username, row.display_name];
+        if (kind === "contest") values.push(row.student_no || "—");
+        values.push(row.value);
+        if (kind === "contest") values.push(row.participations || 0);
+        values.push(row.reached_at ? new Date(row.reached_at).toLocaleString() : "—");
+        for (const value of values) tr.append(node("td", value));
         byID("board-rows").append(tr);
-        }
+      }
       byID("board-meta").textContent = `${board.total} 位参与者 · 第 ${currentPage} 页 · ${new Date(board.built_at).toLocaleString()} 更新`;
       byID("board-prev").disabled = currentPage === 1;
       byID("board-next").disabled = currentPage * 50 >= board.total;
-      showMessage("只展示三个固定榜单，Run 不计入日常成绩。");
+      showMessage(kind === "contest" ? "参赛场次按学号去重，只计算已结算的正式比赛。" : "Run 与比赛提交不计入日常榜。");
     }
-    byID("board-form").onsubmit = (event) => {
+    form.onsubmit = (event) => {
       event.preventDefault();
       currentPage = 1;
       run(event.submitter, load);

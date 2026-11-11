@@ -184,6 +184,7 @@
     let busy = false;
     let activeSubmission;
     let composerStream = null, composerAttempt = "";
+    let customRunInput = "";
 
     function controls() {
       const allowed = user?.account_type === "permanent";
@@ -204,13 +205,15 @@
       }
 
       byID("composer-result").hidden = false;
-      byID("composer-result-link").href = "/submissions/" + encodeURIComponent(submission.id);
-      summary(byID("composer-result-summary"), submission);
-      byID("composer-poll-message").textContent = terminal.has(submission.status) ? "本次处理已结束。" : "状态会自动更新，也可在提交记录中稍后查看。";
-      byID("composer-poll-retry").hidden = true;
       const isRun = submission.kind === "Run";
-      byID("composer-run-output").hidden = !isRun;
-      byID("composer-output").textContent = isRun ? submission.output || "" : "";
+      byID("composer-result-link").hidden = isRun;
+      byID("composer-result-link").href = isRun ? "/submissions" : "/submissions/" + encodeURIComponent(submission.id);
+      summary(byID("composer-result-summary"), submission);
+      byID("composer-poll-message").textContent = isRun
+        ? terminal.has(submission.status) ? "自测结果只在本页展示，不进入“我的提交”记录。" : "自测状态会自动更新，输入与输出保留在本页。"
+        : terminal.has(submission.status) ? "正式提交已进入提交记录。" : "正式提交状态会自动更新，也可在提交记录中稍后查看。";
+      byID("composer-poll-retry").hidden = true;
+      if (isRun) byID("composer-output").textContent = submission.output || "程序正常结束，没有标准输出。";
       const diagnostic = isRun || submission.status === "CompileError" ? submission.error_message || "" : "";
       byID("composer-error-box").hidden = !diagnostic;
       byID("composer-error").textContent = diagnostic;
@@ -220,7 +223,7 @@
       (signal) => request("/api/submissions/" + encodeURIComponent(activeSubmission), "GET", undefined, signal), renderResult,
       (submission) => !terminal.has(submission.status),
       (error, retrying) => {
-        byID("composer-poll-message").textContent = error.status === 401 ? "会话已失效，请登录后到提交记录查看。" : error.message + (retrying ? " 正在等待重新读取。" : "");
+        byID("composer-poll-message").textContent = error.status === 401 ? "会话已失效，请重新登录后再次自测或提交。" : error.message + (retrying ? " 正在等待重新读取。" : "");
         byID("composer-poll-retry").hidden = retrying || error.status === 401 || error.status === 404;
         if (error.status === 401) { user = null; controls(); byID("composer-login").hidden = false; byID("composer-result").hidden = true; }
       }, (submission) => submission.status + ":" + submission.generation,
@@ -247,6 +250,7 @@
         select.value = allowedLanguages.some((language) => language.id === selectedLanguage) ? selectedLanguage : allowedLanguages[0].id;
         const cases=problem.output_cases||[];
         if(problem.problem_type==="output_only")byID("source-code").placeholder=JSON.stringify(Object.fromEntries(cases.map(id=>[id,""])),null,2);
+        if (byID("run-use-sample").checked) byID("run-stdin").value = problem.sample_input || "";
         user = currentUser;
         if (!editor && typeof window.BiueEditor?.mount === "function") editor = window.BiueEditor.mount(byID("source-code"), select.value);
         byID("composer-login").hidden = !!user;
@@ -282,6 +286,7 @@
       try {
         const submission = await write(kind === "Run" ? "/api/runs" : "/api/submissions", input);
         if (disposed) return;
+        if (kind === "Run") byID("composer-output").textContent = "正在运行自测…";
         resultPoll.start(submission);
         textMessage("submission-create-message", kind === "Run" ? "自测已创建。" : "正式提交已创建。", true);
       } catch (error) {
@@ -296,8 +301,25 @@
 
     byID("submission-form").addEventListener("submit", (event) => { event.preventDefault(); create("Submit"); });
     byID("run-button").addEventListener("click", () => create("Run"));
-    byID("run-use-sample").addEventListener("change", controls);
+    byID("run-use-sample").addEventListener("change", () => {
+      if (byID("run-use-sample").checked) {
+        customRunInput = byID("run-stdin").value;
+        byID("run-stdin").value = problem?.sample_input || "";
+      } else {
+        byID("run-stdin").value = customRunInput;
+        byID("run-stdin").focus?.();
+      }
+      controls();
+    });
     byID("submission-language").addEventListener("change", () => editor?.setLanguage(byID("submission-language").value));
+    byID("problem-edit-mode").addEventListener("click", () => {
+      const workspace = byID("problem-workspace");
+      const enabled = !workspace.classList.contains("is-editing");
+      workspace.classList.toggle("is-editing", enabled);
+      byID("problem-edit-mode").setAttribute("aria-pressed", String(enabled));
+      byID("problem-edit-mode").textContent = enabled ? "退出编辑模式" : "开启编辑模式";
+      if (enabled) editor?.focus?.();
+    });
     byID("composer-retry").addEventListener("click", initialize);
     byID("problem-retry").addEventListener("click", initialize);
     byID("composer-poll-retry").addEventListener("click", () => resultPoll.start());

@@ -241,7 +241,7 @@ func normalizeList(opts ListOptions) (ListOptions, error) {
 	if opts.Limit == 0 {
 		opts.Limit = 20
 	}
-	if opts.Page < 1 || opts.Page > 100000 || opts.Limit < 1 || opts.Limit > 100 || opts.Kind != "" && !judge.ValidKind(judge.Kind(opts.Kind)) {
+	if opts.Page < 1 || opts.Page > 100000 || opts.Limit < 1 || opts.Limit > 100 || opts.Kind != "" && opts.Kind != string(judge.Submit) {
 		return ListOptions{}, ErrInvalid
 	}
 	return opts, nil
@@ -255,15 +255,11 @@ func (s *Service) List(ctx context.Context, actor Actor, opts ListOptions) (Page
 	if err != nil {
 		return Page{}, err
 	}
-	where := " FROM submissions s WHERE s.user_id = ?"
+	where := " FROM submissions s WHERE s.user_id = ? AND s.kind = 'Submit'"
 	args := []any{actor.ID}
 	if opts.ProblemID != 0 {
 		where += " AND s.problem_id = ?"
 		args = append(args, opts.ProblemID)
-	}
-	if opts.Kind != "" {
-		where += " AND s.kind = ?"
-		args = append(args, opts.Kind)
 	}
 	page := Page{Items: []Summary{}, Page: opts.Page, Limit: opts.Limit}
 	if err := s.db.GetContext(ctx, &page.Total, "SELECT COUNT(*)"+where, args...); err != nil {

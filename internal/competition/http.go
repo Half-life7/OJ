@@ -134,12 +134,12 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		reply(c, v, e)
 	})
 	g.GET("/api/contests", func(c *gin.Context) {
-		after, err := strconv.ParseUint(c.DefaultQuery("after", "0"), 10, 63)
+		before, err := strconv.ParseUint(c.DefaultQuery("before", "0"), 10, 63)
 		if err != nil {
 			reply(c, nil, ErrInvalid)
 			return
 		}
-		v, e := h.service.List(c.Request.Context(), after)
+		v, e := h.service.List(c.Request.Context(), before)
 		reply(c, v, e)
 	})
 	g.POST("/api/contests", func(c *gin.Context) {

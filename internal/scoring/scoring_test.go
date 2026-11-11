@@ -25,14 +25,14 @@ func TestIndependentOIAndIOI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if oi[0].TeamID != 2 || oi[1].Score != 70 || !oi[1].ImprovedAt.Equal(in.Submissions[1].At) {
+	if oi[0].TeamID != 2 || oi[0].Problems[1].Attempts != 1 || oi[1].Score != 70 || oi[1].Problems[1].Attempts != 3 || !oi[1].ImprovedAt.Equal(in.Submissions[1].At) {
 		t.Fatalf("OI: %+v", oi)
 	}
 	ioi, err := (IOI{}).Calculate(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ioi[0].TeamID != 1 || ioi[0].Score != 100 || ioi[0].Problems[1].Cases["a"] != 30 || !ioi[0].ImprovedAt.Equal(in.Submissions[1].At) {
+	if ioi[0].TeamID != 1 || ioi[0].Score != 100 || ioi[0].Problems[1].Attempts != 3 || ioi[0].Problems[1].Cases["a"] != 30 || !ioi[0].ImprovedAt.Equal(in.Submissions[1].At) {
 		t.Fatalf("IOI: %+v", ioi)
 	}
 	in.Submissions[0], in.Submissions[3] = in.Submissions[3], in.Submissions[0]
@@ -50,7 +50,7 @@ func TestACMPenalties(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows[0].Penalty != 70 || rows[0].Solved != 1 || rows[0].Problems[2].Wrong != 1 || rows[0].Problems[2].Penalty != 0 {
+	if rows[0].Penalty != 70 || rows[0].Solved != 1 || rows[0].Problems[1].Attempts != 7 || rows[0].Problems[2].Wrong != 1 || rows[0].Problems[2].Penalty != 0 {
 		t.Fatalf("ACM: %+v", rows[0])
 	}
 }
