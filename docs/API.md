@@ -8,7 +8,9 @@
 
 Markdown 安全预览使用 `POST /api/admin/problems/markdown-preview`（超级管理员）和 `POST /api/community/preview`（已登录账号）。外部题包使用 `POST /api/admin/problems/package-preview` 与 `package-import`，采用 multipart 的 `archive` ZIP 或内置样例 `sample=1`；错误或预览不会写入题目。
 
-测试中心管理员接口为 `POST /api/admin/operations/simulate`、`POST /api/admin/operations/reset`、`POST /api/admin/operations/rejudge/problem` 与 `/rejudge/contest`。范围重判请求使用 `{key,reason,problem_id}` 或 `{key,reason,contest_id}`；初始化请求使用 `{confirmation,reason}`，确认词必须精确为 `初始化全部业务数据`。这些接口仍受登录、永久超级管理员、Origin、CSRF 和请求 ID 审计约束。
+测试中心管理员接口为 `POST /api/admin/operations/simulate`、`GET /api/admin/operations/simulate/:id`、`POST /api/admin/operations/reset`、`POST /api/admin/operations/rejudge/problem` 与 `/rejudge/contest`。小规模测试启动响应返回异步任务 ID、90 条真实提交及一次性账号密码，状态接口持续返回 OI/ACM/IOI 三场比赛、评测进度、缺失终态和失败原因；只有 Worker/Runner 产出真实终态后才结算。范围重判请求使用 `{key,reason,problem_id}` 或 `{key,reason,contest_id}`；初始化请求使用 `{confirmation,reason}`，确认词必须精确为 `初始化全部业务数据`。这些接口仍受登录、永久超级管理员、Origin、CSRF 和请求 ID 审计约束。
+
+管理员所有提交使用 `GET /api/admin/operations/submissions` 和 `GET /api/admin/operations/submissions/:id`。列表支持 `before`、`limit`、`q`、`kind`、`status`、`problem_id`、`contest_id`；`q` 可匹配提交 ID、账号、身份名称、题目或比赛。列表返回所有永久与比赛临时账号的 Run/Submit，详情返回原始源代码及评测摘要。两个接口都要求永久超级管理员，并把源码作为 JSON 文本输出。
 
 批次 3 的比赛、报名、队伍、身份审核和结算接口见 [比赛 API 与规则](CONTESTS.md#页面与接口)。比赛提交沿用 `/api/submissions`、`/api/runs`，增加可选 contest_id；不接受客户端指定队伍或用户身份。
 

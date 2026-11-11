@@ -41,6 +41,25 @@ func TestIndependentOIAndIOI(t *testing.T) {
 		t.Fatalf("out of order: %v", err)
 	}
 }
+
+func TestProblemResultsExposeLatestRuntimeAndVerdict(t *testing.T) {
+	for _, engine := range []Engine{OI{}, IOI{}, ACM{}} {
+		in := fixture()
+		item := sub(in, 1, 1, 10, "TimeLimitExceeded", 0, 0)
+		item.ExecutionTimeMS = 987
+		item.MemoryUsageKB = 65536
+		in.Submissions = []Submission{item}
+		rows, err := engine.Calculate(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		point := rows[0].Problems[1]
+		if point.ExecutionTimeMS != 987 || point.MemoryUsageKB != 65536 || point.LastStatus != "TimeLimitExceeded" || point.Attempts != 1 {
+			t.Fatalf("%T runtime metadata: %+v", engine, point)
+		}
+	}
+}
+
 func TestACMPenalties(t *testing.T) {
 	in := fixture()
 	in.Problems = append(in.Problems, Problem{2, map[string]int64{"a": 30, "b": 70}})

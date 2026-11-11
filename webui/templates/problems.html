@@ -43,6 +43,7 @@
       <span class="contest-sidebar-label">测试数据</span>
       <button id="problem-nav-data" type="button" class="contest-nav-item" data-problem-admin-panel="data">上传测试数据</button>
       <button id="problem-nav-versions" type="button" class="contest-nav-item" data-problem-admin-panel="versions">数据版本</button>
+      <button id="problem-nav-version-detail" type="button" class="contest-nav-item" data-problem-admin-panel="version-detail" disabled>版本详情</button>
     </aside>
     <div class="contest-content">
   <section id="problem-list-workspace" class="admin-problem-browser" data-problem-admin-panel-content="list">
@@ -115,7 +116,8 @@
           <div class="upload-actions"><button id="data-upload-submit" class="button primary" type="submit">上传并发布新版本</button></div>
         </fieldset><button id="data-upload-cancel" class="button secondary upload-cancel" type="button" hidden>取消上传</button><p id="problem-upload-message" class="form-message" role="status" aria-live="polite" hidden></p></form>
       </section>
-      <section id="problem-versions-workspace" class="profile-card" data-problem-admin-panel-content="versions" hidden><div class="card-heading"><span class="card-number">DATA HISTORY</span><h2>数据版本</h2><p id="problem-current-data">尚未上传测试数据。</p></div><p id="problem-versions-message" class="form-message" role="status" aria-live="polite" hidden></p><button id="problem-versions-retry" class="button secondary" type="button" hidden>重新加载版本</button><div id="problem-version-list" class="problem-version-list"></div><div class="problem-pagination"><button id="version-prev" class="button secondary" type="button">上一页</button><p id="version-page-info" role="status" aria-live="polite"></p><button id="version-next" class="button secondary" type="button">下一页</button></div><div id="problem-version-detail" hidden></div></section>
+      <section id="problem-versions-workspace" class="profile-card" data-problem-admin-panel-content="versions" hidden><div class="card-heading"><span class="card-number">DATA HISTORY</span><h2>数据版本</h2><p id="problem-current-data">尚未上传测试数据。</p></div><p id="problem-versions-message" class="form-message" role="status" aria-live="polite" hidden></p><button id="problem-versions-retry" class="button secondary" type="button" hidden>重新加载版本</button><div id="problem-version-list" class="problem-version-list"></div><div class="problem-pagination"><button id="version-prev" class="button secondary" type="button">上一页</button><p id="version-page-info" role="status" aria-live="polite"></p><button id="version-next" class="button secondary" type="button">下一页</button></div></section>
+      <section id="problem-version-detail-workspace" class="profile-card" data-problem-admin-panel-content="version-detail" hidden><div class="problem-panel-heading"><div><span class="card-number">VERSION DETAIL</span><h2>数据版本详情</h2><p class="profile-note" id="problem-version-detail-heading">选择一个数据版本后查看测试点分值。</p></div><button id="problem-version-back" class="button secondary" type="button">返回数据版本</button></div><div id="problem-version-detail"></div></section>
     </div>
   </div>
 </div>

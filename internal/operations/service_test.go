@@ -14,7 +14,7 @@ func TestOrdinaryAccountCannotReadAdministration(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	s := New(sqlx.NewDb(db, "sqlmock"), nil, nil, nil, nil, 100)
+	s := New(sqlx.NewDb(db, "sqlmock"), nil, nil, nil, nil, nil, 100)
 	m.ExpectQuery("SELECT EXISTS").WithArgs(uint64(1)).WillReturnRows(sqlmock.NewRows([]string{"allowed"}).AddRow(false))
 	if _, e = s.Users(context.Background(), auth.User{ID: 1, GlobalRole: "super_admin"}, 0, ""); e != ErrForbidden {
 		t.Fatal(e)

@@ -270,6 +270,7 @@
   let mutationPending = false;
   let adminPage = 1;
   let versionPage = 1;
+  let activeVersion = 0;
   let listEpoch = 0;
   let editorEpoch = 0;
   let versionEpoch = 0;
@@ -532,25 +533,28 @@ print("AC" if output.split() == expected.split() else "WA")
   }
 
   function workspaceRoute(name) {
+    if (selected && name === "version-detail" && activeVersion) return `#${name}-${selected.id}-${activeVersion}`;
     if (selected && !["list", "new"].includes(name)) return `#${name}-${selected.id}`;
     return `#${name}`;
   }
 
   function workspaceFromHash() {
-    const match = /^#(list|new|edit|data|versions)(?:-(\d+))?$/.exec(window.location.hash || "");
-    if (!match) return { name: "list", id: 0 };
-    return { name: match[1], id: Number(match[2] || 0) };
+    const match = /^#(list|new|edit|data|versions|version-detail)(?:-(\d+))?(?:-(\d+))?$/.exec(window.location.hash || "");
+    if (!match) return { name: "list", id: 0, version: 0 };
+    return { name: match[1], id: Number(match[2] || 0), version: Number(match[3] || 0) };
   }
 
   function switchWorkspace(name, updateHash = true) {
-    if (!["list", "new", "edit", "data", "versions"].includes(name)) name = "list";
-    if (!selected && ["edit", "data", "versions"].includes(name)) name = "new";
+    if (!["list", "new", "edit", "data", "versions", "version-detail"].includes(name)) name = "list";
+    if (!selected && ["edit", "data", "versions", "version-detail"].includes(name)) name = "new";
+    if (name === "version-detail" && !activeVersion) name = "versions";
     activeWorkspace = name;
     const pane = name === "new" ? "edit" : name;
-    for (const candidate of ["list", "edit", "data", "versions"]) byID(`problem-${candidate}-workspace`).hidden = candidate !== pane;
-    for (const button of ["list", "new", "edit", "data", "versions"]) {
+    for (const candidate of ["list", "edit", "data", "versions", "version-detail"]) byID(`problem-${candidate}-workspace`).hidden = candidate !== pane;
+    for (const button of ["list", "new", "edit", "data", "versions", "version-detail"]) {
       byID(`problem-nav-${button}`).classList.toggle("active", button === activeWorkspace);
     }
+    byID("problem-nav-version-detail").disabled = !selected || !activeVersion;
     if (updateHash && window.history?.replaceState) {
       const base = `${window.location.pathname || ""}${window.location.search || ""}`;
       window.history.replaceState(null, "", base + workspaceRoute(name));
@@ -566,6 +570,7 @@ print("AC" if output.split() == expected.split() else "WA")
     byID("problem-new").disabled = mutationPending;
     byID("problem-nav-new").disabled = mutationPending;
     for (const name of ["edit", "data", "versions"]) byID(`problem-nav-${name}`).disabled = mutationPending || !selected;
+    byID("problem-nav-version-detail").disabled = mutationPending || !selected || !activeVersion;
     byID("problem-reload").disabled = mutationPending;
     for (const button of byID("admin-problem-list").querySelectorAll("button")) button.disabled = mutationPending;
   }
@@ -607,7 +612,10 @@ print("AC" if output.split() == expected.split() else "WA")
     publicPreview.hidden = !problem || problem.status !== "published" || problem.visibility !== "public";
     publicPreview.href = problem ? `/problems?q=${encodeURIComponent(problem.title)}` : "/problems";
     byID("problem-current-data").textContent = problem && problem.data_version ? "当前使用数据版本 v" + problem.data_version : "尚未上传测试数据。";
-    byID("problem-version-detail").hidden = true;
+    activeVersion = 0;
+    byID("problem-version-detail-heading").textContent = "选择一个数据版本后查看测试点分值。";
+    byID("problem-version-detail").replaceChildren();
+    byID("problem-nav-version-detail").textContent = "版本详情";
     byID("problem-version-list").replaceChildren();
     message("problem-editor-message", "");
     message("problem-upload-message", "");
@@ -678,7 +686,6 @@ print("AC" if output.split() == expected.split() else "WA")
     const id = selected.id;
     message("problem-versions-message", "正在读取数据版本…", true);
     byID("problem-versions-retry").hidden = true;
-    byID("problem-version-detail").hidden = true;
     try {
       const result = await request("/api/admin/problems/" + encodeURIComponent(id) + "/data-versions?page=" + versionPage + "&limit=20");
       if (sequence !== versionEpoch || !selected || selected.id !== id) return;
@@ -709,14 +716,14 @@ print("AC" if output.split() == expected.split() else "WA")
     const id = selected && selected.id;
     if (!id) return;
     const sequence = ++versionEpoch;
-    button.disabled = true;
+    if (button) button.disabled = true;
     message("problem-versions-message", "正在读取测试点分值…", true);
     try {
       const result = await request("/api/admin/problems/" + encodeURIComponent(id) + "/data-versions/" + encodeURIComponent(version));
       if (sequence !== versionEpoch || !selected || selected.id !== id) return;
+      activeVersion = Number(result.data_version);
       const detail = byID("problem-version-detail");
-      detail.replaceChildren(node("h3", "数据版本 v" + result.data_version));
-      detail.append(node("p", "内容摘要：" + result.digest, "problem-digest"));
+      detail.replaceChildren(node("p", "内容摘要：" + result.digest, "problem-digest"));
       const table = node("table", undefined, "problem-case-table");
       const head = node("thead");
       const headings = node("tr");
@@ -734,12 +741,14 @@ print("AC" if output.split() == expected.split() else "WA")
       }
       table.append(head, body);
       detail.append(table);
-      detail.hidden = false;
+      byID("problem-version-detail-heading").textContent = "v" + result.data_version + " · " + (result.cases || []).length + " 个测试点";
+      byID("problem-nav-version-detail").textContent = "版本详情 v" + result.data_version;
       message("problem-versions-message", "");
+      switchWorkspace("version-detail");
     } catch (error) {
       if (sequence === versionEpoch) adminError(error, "problem-versions-message");
     } finally {
-      button.disabled = false;
+      if (button) button.disabled = false;
     }
   }
 
@@ -965,6 +974,13 @@ print("AC" if output.split() == expected.split() else "WA")
     switchWorkspace("versions");
     loadVersions();
   });
+  byID("problem-nav-version-detail").addEventListener("click", () => {
+    if (selected && activeVersion) switchWorkspace("version-detail");
+  });
+  byID("problem-version-back").addEventListener("click", () => {
+    switchWorkspace("versions");
+    loadVersions();
+  });
   byID("problem-reload").addEventListener("click", () => {
     if (selected && !mutationPending && mayDiscard()) selectProblem(selected.id, true);
   });
@@ -999,7 +1015,8 @@ print("AC" if output.split() == expected.split() else "WA")
       const initialID = Number(new URLSearchParams(window.location.search).get("select")) || route.id;
       if (Number.isSafeInteger(initialID) && initialID > 0) {
         await selectProblem(initialID, true);
-        if (["data", "versions"].includes(route.name)) switchWorkspace(route.name);
+        if (route.name === "version-detail" && route.version > 0) await loadVersion(route.version);
+        else if (["data", "versions"].includes(route.name)) switchWorkspace(route.name);
       }
       else if (route.name === "new") startNewProblem();
       else switchWorkspace("list");

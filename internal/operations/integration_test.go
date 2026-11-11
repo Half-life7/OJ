@@ -2,9 +2,11 @@ package operations
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"biue/internal/competition"
 	"biue/internal/problem"
 	"biue/internal/problemdata"
+	"biue/internal/submission"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -91,16 +94,20 @@ func TestSimulationAndResetWithRealMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	contests := competition.New(db)
-	service := New(db, nil, store, problems, contests, 5000)
-	admin := auth.User{ID: 1, Username: "admin_user", AccountType: "permanent", GlobalRole: "super_admin", Status: "active"}
-	result, err := service.Simulate(context.Background(), admin)
+	submissionsService, err := submission.New(db, submission.Config{QueueCapacity: 5000}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Users != 36 || len(result.ProblemIDs) != 3 || result.PracticeSubmits < 432 || result.ContestSubmissions < 432 {
+	service := New(db, nil, store, problems, contests, submissionsService, 5000)
+	admin := auth.User{ID: 1, Username: "admin_user", AccountType: "permanent", GlobalRole: "super_admin", Status: "active"}
+	result, submissionIDs, err := service.provisionSimulation(context.Background(), admin, "integration-simulation", "abc123def456", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Users != 30 || result.Problems != 6 || len(result.Contests) != 3 || result.PracticeSubmissions != 30 || result.ContestSubmissions != 60 || len(submissionIDs) != 90 {
 		t.Fatalf("unexpected simulation result: %+v", result)
 	}
-	var users, publicProblems, submissions, results, pending, points int
+	var users, publicProblems, submissions, results, pending, outbox int
 	countQueries := []struct {
 		query  string
 		target *int
@@ -110,32 +117,40 @@ func TestSimulationAndResetWithRealMySQL(t *testing.T) {
 		{`SELECT COUNT(*) FROM submissions`, &submissions},
 		{`SELECT COUNT(*) FROM submission_results`, &results},
 		{`SELECT COUNT(*) FROM judge_tasks WHERE status IN ('Pending','Queued','Compiling','Running')`, &pending},
-		{`SELECT COUNT(*) FROM contest_points`, &points},
+		{`SELECT COUNT(*) FROM judge_task_outbox`, &outbox},
 	}
 	for _, item := range countQueries {
 		if err := db.Get(item.target, item.query); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if users != 38 || publicProblems != 3 || submissions != result.PracticeSubmits+result.ContestSubmissions || results != submissions || pending != 0 || points != 36 {
-		t.Fatalf("simulation counts users=%d problems=%d submissions=%d results=%d pending=%d points=%d", users, publicProblems, submissions, results, pending, points)
+	if users != 32 || publicProblems != 6 || submissions != 90 || results != 0 || pending != 90 || outbox != 90 {
+		t.Fatalf("real simulation counts users=%d problems=%d submissions=%d results=%d pending=%d outbox=%d", users, publicProblems, submissions, results, pending, outbox)
 	}
-	var settled bool
-	if err := db.Get(&settled, `SELECT settled_at IS NOT NULL FROM contests WHERE id=?`, result.ContestID); err != nil || !settled {
-		t.Fatalf("simulation contest was not settled: %v %v", settled, err)
+	var three int
+	if err := db.Get(&three, `SELECT COUNT(*) FROM contests WHERE scoring_mode IN ('OI','ACM','IOI')`); err != nil || three != 3 {
+		t.Fatalf("three real contests were not created: %d %v", three, err)
 	}
-
-	exec(`UPDATE judge_tasks SET status='Pending' ORDER BY id LIMIT 1`)
+	adminPage, err := service.AdminSubmissions(context.Background(), admin, AdminSubmissionQuery{Limit: 100})
+	if err != nil || len(adminPage.Items) != 90 {
+		t.Fatalf("all-submissions page: len=%d err=%v", len(adminPage.Items), err)
+	}
+	adminDetail, err := service.AdminSubmission(context.Background(), admin, adminPage.Items[0].ID)
+	if err != nil || !strings.Contains(adminDetail.SourceCode, "#include") {
+		t.Fatalf("all-submissions source detail: %+v err=%v", adminDetail.Summary, err)
+	}
 	if _, err := service.Reset(context.Background(), admin, ResetInput{Confirmation: ResetConfirmation, Reason: "must reject active task"}, "reset-active"); err != ErrConflict {
 		t.Fatalf("reset with active task error=%v", err)
 	}
-	exec(`UPDATE judge_tasks t JOIN submission_results r ON r.submission_id=t.submission_id AND r.generation=t.generation SET t.status=r.status`)
+	exec(`DELETE FROM judge_task_outbox`)
+	exec(`DELETE FROM judge_tasks`)
+	exec(`DELETE FROM submissions`)
 
 	reset, err := service.Reset(context.Background(), admin, ResetInput{Confirmation: ResetConfirmation, Reason: "integration reset"}, "reset-request")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reset.DataVersions != 3 || reset.Complete || len(reset.Warnings) != 1 {
+	if reset.DataVersions != 6 || reset.Complete || len(reset.Warnings) != 1 {
 		t.Fatalf("unexpected reset result: %+v", reset)
 	}
 	if err := db.Get(&users, `SELECT COUNT(*) FROM users`); err != nil || users != 1 {
@@ -192,9 +207,9 @@ func TestProblemRejudgeSkipsSettledContestWithRealMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := simulationProblems("judge")[0]
+	definition := simulationDefinitions("judge")[0]
 	created, err := problems.ImportPackage(context.Background(), problem.Actor{ID: 1, Role: "super_admin"}, problem.ProblemPackage{
-		Input: definition.input, Dataset: definition.dataset,
+		Input: definition.problem, Dataset: definition.dataset,
 	}, "rejudge-problem")
 	if err != nil {
 		t.Fatal(err)
@@ -215,12 +230,12 @@ func TestProblemRejudgeSkipsSettledContestWithRealMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	for _, item := range []simulatedSubmission{
-		{UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion, ContestID: nil, TeamID: nil, Source: "int main(){}", Status: "Accepted", Score: 100, Passed: 2, Total: 2, Created: actualTime(now, -30)},
-		{UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion, ContestID: uint64(1), TeamID: uint64(1), Source: "int main(){}", Status: "Accepted", Score: 100, Passed: 2, Total: 2, Created: actualTime(now, -20)},
-		{UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion, ContestID: uint64(2), TeamID: uint64(2), Source: "int main(){}", Status: "Accepted", Score: 100, Passed: 2, Total: 2, Created: actualTime(now, -100)},
+	for _, item := range []terminalFixture{
+		{UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion, ContestID: nil, TeamID: nil, Source: "int main(){}", Status: "Accepted", Score: 100, Passed: 1, Total: 1, Created: actualTime(now, -30)},
+		{UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion, ContestID: uint64(1), TeamID: uint64(1), Source: "int main(){}", Status: "Accepted", Score: 100, Passed: 1, Total: 1, Created: actualTime(now, -20)},
+		{UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion, ContestID: uint64(2), TeamID: uint64(2), Source: "int main(){}", Status: "Accepted", Score: 100, Passed: 1, Total: 1, Created: actualTime(now, -100)},
 	} {
-		if _, err := insertSimulatedSubmission(context.Background(), tx, item); err != nil {
+		if _, err := seedTerminalSubmission(context.Background(), tx, item); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -238,7 +253,7 @@ func TestProblemRejudgeSkipsSettledContestWithRealMySQL(t *testing.T) {
 	if _, err := problems.Import(context.Background(), adminProblem, created.ID, updated.Revision, definition.dataset, problem.ImportReplace, "rejudge-data-v2"); err != nil {
 		t.Fatal(err)
 	}
-	service := New(db, nil, store, problems, competition.New(db), 100)
+	service := New(db, nil, store, problems, competition.New(db), nil, 100)
 	admin := auth.User{ID: 1, Username: "admin_user", AccountType: "permanent", GlobalRole: "super_admin", Status: "active"}
 	if _, err := service.RejudgeContest(context.Background(), admin, ScopeRejudgeInput{
 		Key: "settled-contest-key", Reason: "must be rejected", ContestID: 2,
@@ -276,10 +291,10 @@ func TestProblemRejudgeSkipsSettledContestWithRealMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := insertSimulatedSubmission(context.Background(), tx, simulatedSubmission{
+	if _, err := seedTerminalSubmission(context.Background(), tx, terminalFixture{
 		UserID: 2, ProblemID: created.ID, StatementVersion: created.StatementVersion, DataVersion: created.DataVersion,
 		ContestID: uint64(1), TeamID: uint64(1), Source: "int main(){return 1;}", Status: "WrongAnswer",
-		Score: 0, Passed: 0, Total: 2, Created: actualTime(now, -10),
+		Score: 0, Passed: 0, Total: 1, Created: actualTime(now, -10),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -307,4 +322,51 @@ func TestProblemRejudgeSkipsSettledContestWithRealMySQL(t *testing.T) {
 
 func actualTime(now time.Time, minutes int) time.Time {
 	return now.Add(time.Duration(minutes) * time.Minute)
+}
+
+type terminalFixture struct {
+	UserID           uint64
+	ProblemID        uint64
+	StatementVersion uint64
+	DataVersion      uint64
+	ContestID        any
+	TeamID           any
+	Source           string
+	Status           string
+	Score            int64
+	Passed           int
+	Total            int
+	Created          time.Time
+}
+
+func seedTerminalSubmission(ctx context.Context, tx *sqlx.Tx, item terminalFixture) (uint64, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO submissions(user_id,problem_id,statement_version,data_version,contest_id,contest_team_id,kind,language,source_code,stdin,generation,status,score,execution_time_ms,memory_usage_kb,passed_cases,total_cases,output,error_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,1,?,?,?,?,?,?,?,?,?,?)`,
+		item.UserID, item.ProblemID, item.StatementVersion, item.DataVersion, item.ContestID, item.TeamID,
+		"Submit", "cpp17", item.Source, item.Status, item.Score, 12, 1024, item.Passed, item.Total, "", "", item.Created, item.Created)
+	if err != nil {
+		return 0, err
+	}
+	submissionID, err := result.LastInsertId()
+	if err != nil || submissionID < 1 {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO judge_tasks(submission_id,generation,attempt,status,error_message,created_at,updated_at) VALUES (?,1,1,?,'',?,?)`,
+		submissionID, item.Status, item.Created, item.Created); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO submission_results(submission_id,generation,attempt,status,score,execution_time_ms,memory_usage_kb,passed_cases,total_cases,output,error_message,created_at) VALUES (?,1,1,?,?,?,?,?,?,?,?,?)`,
+		submissionID, item.Status, item.Score, 12, 1024, item.Passed, item.Total, "", "", item.Created); err != nil {
+		return 0, err
+	}
+	for index := 1; index <= item.Total; index++ {
+		caseScore := item.Score / int64(item.Total)
+		if index == item.Total {
+			caseScore += item.Score % int64(item.Total)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO submission_case_results(submission_id,generation,case_id,status,score,execution_time_ms,memory_usage_kb) VALUES (?,1,?,?,?,?,?)`,
+			submissionID, fmt.Sprintf("%d", index), item.Status, caseScore, 6, 512); err != nil {
+			return 0, err
+		}
+	}
+	return uint64(submissionID), nil
 }

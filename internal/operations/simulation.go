@@ -7,315 +7,505 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"biue/internal/auth"
+	"biue/internal/judge"
 	"biue/internal/problem"
+	"biue/internal/submission"
 	"biue/internal/testcase"
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/bcrypt"
 )
 
-const simulatedUserCount = 36
+const (
+	simulatedGroupSize = 10
+	simulationWait     = 5 * time.Minute
+)
+
+var (
+	simulationModes      = []string{"OI", "ACM", "IOI"}
+	requiredSimulation   = []string{"Accepted", "WrongAnswer", "TimeLimitExceeded", "MemoryLimitExceeded", "RuntimeError", "CompileError"}
+	simulationHTTPClient = &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
+)
 
 type SimulationResult struct {
-	ContestID          uint64   `json:"contest_id"`
-	ProblemIDs         []uint64 `json:"problem_ids"`
-	UsernamePrefix     string   `json:"username_prefix"`
-	Usernames          []string `json:"usernames"`
-	InitialPassword    string   `json:"initial_password"`
-	Users              int      `json:"users"`
-	PracticeSubmits    int      `json:"practice_submissions"`
-	ContestSubmissions int      `json:"contest_submissions"`
-	SimulationLabel    string   `json:"simulation_label"`
-	Warnings           []string `json:"warnings"`
-	Complete           bool     `json:"complete"`
+	ID                  string            `json:"id"`
+	Status              string            `json:"status"`
+	StartedAt           time.Time         `json:"started_at"`
+	DeadlineAt          time.Time         `json:"deadline_at"`
+	FinishedAt          *time.Time        `json:"finished_at,omitempty"`
+	Complete            bool              `json:"complete"`
+	SimulationLabel     string            `json:"simulation_label"`
+	Users               int               `json:"users"`
+	Problems            int               `json:"problems"`
+	Contests            map[string]uint64 `json:"contests"`
+	Usernames           []string          `json:"usernames"`
+	InitialPassword     string            `json:"initial_password,omitempty"`
+	PracticeSubmissions int               `json:"practice_submissions"`
+	ContestSubmissions  int               `json:"contest_submissions"`
+	TotalSubmissions    int               `json:"total_submissions"`
+	Terminal            int               `json:"terminal"`
+	Pending             int               `json:"pending"`
+	Progress            map[string]int    `json:"progress"`
+	RequiredOutcomes    []string          `json:"required_outcomes"`
+	MissingOutcomes     []string          `json:"missing_outcomes"`
+	Warnings            []string          `json:"warnings"`
 }
 
-type simulationProblem struct {
-	input   problem.Input
-	dataset testcase.Dataset
-	correct string
+type simulationJob struct {
+	result        SimulationResult
+	submissionIDs []uint64
 }
 
-// Simulate creates a self-contained, clearly labelled test fixture. Synthetic
-// submissions are terminal rows without outbox entries; they never claim that
-// an isolated runner executed.
-func (s *Service) Simulate(ctx context.Context, actor auth.User) (SimulationResult, error) {
+type simulationDefinition struct {
+	problem  problem.Input
+	dataset  testcase.Dataset
+	source   string
+	language string
+	outcome  string
+}
+
+// StartSimulation provisions a bounded real judging run. Synthetic results are
+// never inserted: submissions enter the ordinary outbox and are left Pending
+// until Worker/Runner produce authoritative terminal rows.
+func (s *Service) StartSimulation(ctx context.Context, actor auth.User) (SimulationResult, error) {
 	if err := s.authorized(ctx, actor); err != nil {
 		return SimulationResult{}, err
 	}
-	if s.db == nil || s.problems == nil || s.competition == nil {
+	if s.db == nil || s.problems == nil || s.competition == nil || s.submissions == nil {
 		return SimulationResult{}, ErrUnavailable
+	}
+	if !simulationRuntimeReady(ctx) {
+		return SimulationResult{}, ErrRunnerUnavailable
+	}
+	s.simulationMu.Lock()
+	if s.simulations == nil {
+		s.simulations = make(map[string]*simulationJob)
+	}
+	for _, job := range s.simulations {
+		if job.result.Status == "provisioning" || job.result.Status == "running" {
+			s.simulationMu.Unlock()
+			return SimulationResult{}, ErrConflict
+		}
 	}
 	suffix, err := randomHex(6)
 	if err != nil {
+		s.simulationMu.Unlock()
 		return SimulationResult{}, ErrUnavailable
 	}
+	jobID, err := randomHex(12)
+	if err != nil {
+		s.simulationMu.Unlock()
+		return SimulationResult{}, ErrUnavailable
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	stub := &simulationJob{result: SimulationResult{
+		ID: jobID, Status: "provisioning", StartedAt: now, DeadlineAt: now.Add(simulationWait),
+		SimulationLabel: "真实 Worker/Runner 执行的小规模测试",
+		Contests:        map[string]uint64{}, Usernames: []string{}, Progress: map[string]int{},
+		RequiredOutcomes: append([]string(nil), requiredSimulation...), Warnings: []string{},
+	}}
+	s.simulations[jobID] = stub
+	s.simulationMu.Unlock()
+
+	provisioned, submissionIDs, err := s.provisionSimulation(ctx, actor, jobID, suffix, now)
+	if err != nil {
+		s.failSimulation(jobID, "创建真实评测任务失败："+simulationErrorText(err))
+		return SimulationResult{}, err
+	}
+	s.simulationMu.Lock()
+	job := s.simulations[jobID]
+	response := copySimulationResult(provisioned)
+	provisioned.Status = "running"
+	provisioned.InitialPassword = ""
+	job.result = provisioned
+	job.submissionIDs = submissionIDs
+	s.simulationMu.Unlock()
+	go s.monitorSimulation(jobID, actor)
+	return response, nil
+}
+
+func (s *Service) SimulationStatus(ctx context.Context, actor auth.User, id string) (SimulationResult, error) {
+	if err := s.authorized(ctx, actor); err != nil {
+		return SimulationResult{}, err
+	}
+	s.simulationMu.Lock()
+	defer s.simulationMu.Unlock()
+	job := s.simulations[id]
+	if job == nil {
+		return SimulationResult{}, ErrNotFound
+	}
+	return copySimulationResult(job.result), nil
+}
+
+func (s *Service) provisionSimulation(ctx context.Context, actor auth.User, jobID, suffix string, now time.Time) (SimulationResult, []uint64, error) {
 	passwordBytes := make([]byte, 18)
 	if _, err := rand.Read(passwordBytes); err != nil {
-		return SimulationResult{}, ErrUnavailable
+		return SimulationResult{}, nil, ErrUnavailable
 	}
 	password := "sim-" + base64.RawURLEncoding.EncodeToString(passwordBytes)
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return SimulationResult{}, ErrUnavailable
+		return SimulationResult{}, nil, ErrUnavailable
 	}
-	actorProblem := problem.Actor{ID: actor.ID, Role: actor.GlobalRole}
-	definitions := simulationProblems(suffix)
+	definitions := simulationDefinitions(suffix)
 	createdProblems := make([]problem.Problem, 0, len(definitions))
 	for index, definition := range definitions {
-		created, err := s.problems.ImportPackage(ctx, actorProblem, problem.ProblemPackage{
-			Input: definition.input, Dataset: definition.dataset,
+		created, err := s.problems.ImportPackage(ctx, problem.Actor{ID: actor.ID, Role: actor.GlobalRole}, problem.ProblemPackage{
+			Input: definition.problem, Dataset: definition.dataset,
 		}, fmt.Sprintf("simulate-%s-problem-%d", suffix, index+1))
 		if err != nil {
-			return SimulationResult{}, ErrUnavailable
+			return SimulationResult{}, nil, ErrUnavailable
 		}
 		createdProblems = append(createdProblems, created)
 	}
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	contestStart := now.Add(-3 * time.Hour)
-	contestEnd := now.Add(-time.Hour)
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return SimulationResult{}, ErrUnavailable
+		return SimulationResult{}, nil, ErrUnavailable
 	}
 	defer tx.Rollback()
-	contestResult, err := tx.ExecContext(ctx, `INSERT INTO contests(title,scoring_mode,enrollment_policy,approval_required,team_mode,starts_at,ends_at,revision,created_by,created_at) VALUES (?,?,?,?,?,?,?,1,?,?)`,
-		"模拟赛 "+suffix, "OI", "admin_add", false, false, contestStart, contestEnd, actor.ID, now)
-	if err != nil {
-		return SimulationResult{}, ErrUnavailable
-	}
-	contestID, err := contestResult.LastInsertId()
-	if err != nil || contestID < 1 {
-		return SimulationResult{}, ErrUnavailable
-	}
-	for _, item := range createdProblems {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO contest_problems(contest_id,problem_id,statement_version,data_version) VALUES (?,?,?,?)`, contestID, item.ID, item.StatementVersion, item.DataVersion); err != nil {
-			return SimulationResult{}, ErrUnavailable
+	contests := map[string]uint64{}
+	for _, mode := range simulationModes {
+		result, err := tx.ExecContext(ctx, `INSERT INTO contests(title,scoring_mode,enrollment_policy,approval_required,team_mode,starts_at,ends_at,revision,created_by,created_at) VALUES (?,?,?,?,?,?,?,1,?,?)`,
+			fmt.Sprintf("真实小规模测试 %s [%s]", mode, suffix), mode, "admin_add", false, false,
+			now.Add(-time.Minute), now.Add(4*time.Minute), actor.ID, now)
+		if err != nil {
+			return SimulationResult{}, nil, ErrUnavailable
+		}
+		id, err := result.LastInsertId()
+		if err != nil || id < 1 {
+			return SimulationResult{}, nil, ErrUnavailable
+		}
+		contests[mode] = uint64(id)
+		for _, item := range createdProblems {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO contest_problems(contest_id,problem_id,statement_version,data_version) VALUES (?,?,?,?)`,
+				id, item.ID, item.StatementVersion, item.DataVersion); err != nil {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
 		}
 	}
-	result := SimulationResult{
-		ContestID: uint64(contestID), ProblemIDs: make([]uint64, 0, len(createdProblems)),
-		UsernamePrefix: "sim" + suffix, InitialPassword: password, Users: simulatedUserCount,
-		SimulationLabel: "测试中心模拟数据，不是真实 Runner 执行结果", Warnings: []string{}, Complete: true,
-	}
-	for _, item := range createdProblems {
-		result.ProblemIDs = append(result.ProblemIDs, item.ID)
-	}
+
 	type simulatedAccount struct {
-		UserID uint64
-		TeamID uint64
+		UserID   uint64
+		Username string
+		Mode     string
+		Index    int
 	}
-	for index := 0; index < simulatedUserCount; index++ {
-		student := fmt.Sprintf("SIM%s%02d", strings.ToUpper(suffix), index+1)
-		name := fmt.Sprintf("模拟选手 %02d", index+1)
-		personResult, err := tx.ExecContext(ctx, `INSERT INTO persons(display_name,student_no,student_no_status,organization,revision,created_at,updated_at) VALUES (?,?,?,?,1,?,?)`,
-			name, student, "verified", "Biue Test Center", now, now)
-		if err != nil {
-			return SimulationResult{}, ErrUnavailable
-		}
-		personID, err := personResult.LastInsertId()
-		if err != nil || personID < 1 {
-			return SimulationResult{}, ErrUnavailable
-		}
-		username := fmt.Sprintf("sim%s%02d", suffix, index+1)
-		userResult, err := tx.ExecContext(ctx, `INSERT INTO users(username,password_hash,account_type,global_role,status,token_version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)`,
-			username, string(hash), "permanent", "user", "active", now, now)
-		if err != nil {
-			return SimulationResult{}, ErrUnavailable
-		}
-		userID, err := userResult.LastInsertId()
-		if err != nil || userID < 1 {
-			return SimulationResult{}, ErrUnavailable
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO person_accounts(user_id,person_id,created_at) VALUES (?,?,?)`, userID, personID, now); err != nil {
-			return SimulationResult{}, ErrUnavailable
-		}
-		teamResult, err := tx.ExecContext(ctx, `INSERT INTO contest_teams(contest_id,name,participant_type,status,created_at) VALUES (?,?,?,?,?)`,
-			contestID, fmt.Sprintf("模拟队 %02d", index+1), "official", "active", now)
-		if err != nil {
-			return SimulationResult{}, ErrUnavailable
-		}
-		teamID, err := teamResult.LastInsertId()
-		if err != nil || teamID < 1 {
-			return SimulationResult{}, ErrUnavailable
-		}
-		identity, _ := json.Marshal(map[string]any{
-			"ID": userID, "Person": personID, "Username": username, "Name": name,
-			"Student": student, "StudentStatus": "verified", "Organization": "Biue Test Center", "Kind": "permanent",
-		})
-		if _, err := tx.ExecContext(ctx, `INSERT INTO contest_team_members(contest_id,team_id,user_id,person_id,identity_snapshot) VALUES (?,?,?,?,?)`,
-			contestID, teamID, userID, personID, string(identity)); err != nil {
-			return SimulationResult{}, ErrUnavailable
-		}
-		account := simulatedAccount{UserID: uint64(userID), TeamID: uint64(teamID)}
-		result.Usernames = append(result.Usernames, username)
-		total := 24 + index%17
-		practice := total / 2
-		contestCount := total - practice
-		for attempt := 0; attempt < total; attempt++ {
-			problemIndex := (index + attempt) % len(createdProblems)
-			creation := now.Add(-time.Duration((index+1)*100+attempt) * time.Minute)
-			var contestValue any
-			var teamValue any
-			isContest := attempt >= practice && attempt < practice+contestCount
-			if isContest {
-				contestValue = contestID
-				teamValue = teamID
-				creation = contestStart.Add(time.Duration(index*40+attempt-practice) * time.Second)
-			}
-			status := "Accepted"
-			score := int64(100)
-			passed := len(definitions[problemIndex].dataset.Cases)
-			if (index*7+attempt*11)%5 == 0 {
-				status, score, passed = "WrongAnswer", 0, 0
-			}
-			code := fmt.Sprintf("// BIUE SIMULATION: %s\n%s", result.SimulationLabel, definitions[problemIndex].correct)
-			if status != "Accepted" {
-				code = fmt.Sprintf("// BIUE SIMULATION: %s\nint main() { return 0; }\n", result.SimulationLabel)
-			}
-			_, err = insertSimulatedSubmission(ctx, tx, simulatedSubmission{
-				UserID: account.UserID, ProblemID: createdProblems[problemIndex].ID,
-				StatementVersion: createdProblems[problemIndex].StatementVersion, DataVersion: createdProblems[problemIndex].DataVersion,
-				ContestID: contestValue, TeamID: teamValue, Source: code, Status: status, Score: int64(score),
-				Passed: passed, Total: len(definitions[problemIndex].dataset.Cases), Created: creation,
-			})
+	accounts := make([]simulatedAccount, 0, simulatedGroupSize*len(simulationModes))
+	usernames := make([]string, 0, cap(accounts))
+	globalIndex := 0
+	for _, mode := range simulationModes {
+		for index := 0; index < simulatedGroupSize; index++ {
+			globalIndex++
+			student := fmt.Sprintf("SIM%s%02d", strings.ToUpper(suffix), globalIndex)
+			name := fmt.Sprintf("真实测试选手 %s-%02d", mode, index+1)
+			personResult, err := tx.ExecContext(ctx, `INSERT INTO persons(display_name,student_no,student_no_status,organization,revision,created_at,updated_at) VALUES (?,?,?,?,1,?,?)`,
+				name, student, "verified", "Biue Real Test", now, now)
 			if err != nil {
-				return SimulationResult{}, ErrUnavailable
+				return SimulationResult{}, nil, ErrUnavailable
 			}
-			if isContest {
-				result.ContestSubmissions++
-			} else {
-				result.PracticeSubmits++
+			personID, err := personResult.LastInsertId()
+			if err != nil || personID < 1 {
+				return SimulationResult{}, nil, ErrUnavailable
 			}
+			username := fmt.Sprintf("sim%s%02d", suffix, globalIndex)
+			userResult, err := tx.ExecContext(ctx, `INSERT INTO users(username,password_hash,account_type,global_role,status,token_version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)`,
+				username, string(hash), "permanent", "user", "active", now, now)
+			if err != nil {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			userID, err := userResult.LastInsertId()
+			if err != nil || userID < 1 {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO person_accounts(user_id,person_id,created_at) VALUES (?,?,?)`, userID, personID, now); err != nil {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			teamResult, err := tx.ExecContext(ctx, `INSERT INTO contest_teams(contest_id,name,participant_type,status,created_at) VALUES (?,?,?,?,?)`,
+				contests[mode], fmt.Sprintf("%s 真实测试队 %02d", mode, index+1), "official", "active", now)
+			if err != nil {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			teamID, err := teamResult.LastInsertId()
+			if err != nil || teamID < 1 {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			identity, _ := json.Marshal(map[string]any{
+				"ID": userID, "Person": personID, "Username": username, "Name": name,
+				"Student": student, "StudentStatus": "verified", "Organization": "Biue Real Test", "Kind": "permanent",
+			})
+			if _, err := tx.ExecContext(ctx, `INSERT INTO contest_team_members(contest_id,team_id,user_id,person_id,identity_snapshot) VALUES (?,?,?,?,?)`,
+				contests[mode], teamID, userID, personID, string(identity)); err != nil {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			accounts = append(accounts, simulatedAccount{UserID: uint64(userID), Username: username, Mode: mode, Index: index})
+			usernames = append(usernames, username)
 		}
 	}
-	details, _ := json.Marshal(map[string]any{
-		"contest_id": contestID, "problems": result.ProblemIDs, "users": simulatedUserCount,
-		"practice_submissions": result.PracticeSubmits, "contest_submissions": result.ContestSubmissions,
-		"label": result.SimulationLabel,
+	auditDetails, _ := json.Marshal(map[string]any{
+		"job_id": jobID, "modes": simulationModes, "group_size": simulatedGroupSize,
+		"problems": createdProblems, "real_runner": true, "deadline_seconds": int(simulationWait / time.Second),
 	})
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(actor_user_id,action,object_type,object_id,request_id,details,created_at) VALUES (?,'operations.simulate','contest',?,?,?,?)`,
-		actor.ID, contestID, "simulate-"+suffix, string(details), now); err != nil {
-		return SimulationResult{}, ErrUnavailable
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(actor_user_id,action,object_type,object_id,request_id,details,created_at) VALUES (?,'operations.simulate.start','system',0,?,?,?)`,
+		actor.ID, "simulate-"+suffix, string(auditDetails), now); err != nil {
+		return SimulationResult{}, nil, ErrUnavailable
 	}
 	if err := tx.Commit(); err != nil {
-		return SimulationResult{}, ErrUnavailable
+		return SimulationResult{}, nil, ErrUnavailable
 	}
-	if _, err := s.competition.Settle(ctx, actor, uint64(contestID)); err != nil {
-		result.Complete = false
-		result.Warnings = append(result.Warnings, "账号、题目和提交已写入，但比赛结算未完成；可在比赛工作区核对后重试结算")
-	}
-	return result, nil
-}
 
-type simulatedSubmission struct {
-	UserID           uint64
-	ProblemID        uint64
-	StatementVersion uint64
-	DataVersion      uint64
-	ContestID        any
-	TeamID           any
-	Source           string
-	Status           string
-	Score            int64
-	Passed           int
-	Total            int
-	Created          time.Time
-}
-
-func insertSimulatedSubmission(ctx context.Context, tx *sqlx.Tx, item simulatedSubmission) (uint64, error) {
-	result, err := tx.ExecContext(ctx, `INSERT INTO submissions(user_id,problem_id,statement_version,data_version,contest_id,contest_team_id,kind,language,source_code,stdin,generation,status,score,execution_time_ms,memory_usage_kb,passed_cases,total_cases,output,error_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,1,?,?,?,?,?,?,?,?,?,?)`,
-		item.UserID, item.ProblemID, item.StatementVersion, item.DataVersion, item.ContestID, item.TeamID,
-		"Submit", "cpp17", item.Source, item.Status, item.Score, 12, 1024, item.Passed, item.Total, "", "", item.Created, item.Created)
-	if err != nil {
-		return 0, err
+	result := SimulationResult{
+		ID: jobID, Status: "running", StartedAt: now, DeadlineAt: now.Add(simulationWait),
+		SimulationLabel: "真实 Worker/Runner 执行的小规模测试", Users: len(accounts), Problems: len(createdProblems),
+		Contests: contests, Usernames: usernames, InitialPassword: password,
+		RequiredOutcomes: append([]string(nil), requiredSimulation...), Progress: map[string]int{}, Warnings: []string{},
 	}
-	submissionID, err := result.LastInsertId()
-	if err != nil || submissionID < 1 {
-		return 0, fmt.Errorf("simulation submission id")
-	}
-	taskResult, err := tx.ExecContext(ctx, `INSERT INTO judge_tasks(submission_id,generation,attempt,status,error_message,created_at,updated_at) VALUES (?,1,1,?,'',?,?)`,
-		submissionID, item.Status, item.Created, item.Created)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := taskResult.LastInsertId(); err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO submission_results(submission_id,generation,attempt,status,score,execution_time_ms,memory_usage_kb,passed_cases,total_cases,output,error_message,created_at) VALUES (?,1,1,?,?,?,?,?,?,?,?,?)`,
-		submissionID, item.Status, item.Score, 12, 1024, item.Passed, item.Total, "", "", item.Created); err != nil {
-		return 0, err
-	}
-	for index := 1; index <= item.Total; index++ {
-		caseStatus := item.Status
-		caseScore := item.Score / int64(item.Total)
-		if index == item.Total {
-			caseScore += item.Score % int64(item.Total)
+	submissionIDs := []uint64{}
+	for _, account := range accounts {
+		practiceIndex := account.Index % len(definitions)
+		contestA := (account.Index + len(simulationModes)*2) % len(definitions)
+		contestB := (account.Index + simulatedGroupSize) % len(definitions)
+		practice, err := s.submissions.Create(ctx, submission.Actor{ID: account.UserID, AccountType: "permanent", Role: "user"}, "Submit", submission.CreateInput{
+			ProblemID: createdProblems[practiceIndex].ID, Language: definitions[practiceIndex].language, SourceCode: definitions[practiceIndex].source,
+		}, fmt.Sprintf("sim-%s-%d-practice", jobID, account.UserID))
+		if err != nil {
+			return SimulationResult{}, nil, ErrUnavailable
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO submission_case_results(submission_id,generation,case_id,status,score,execution_time_ms,memory_usage_kb) VALUES (?,1,?,?,?,?,?)`,
-			submissionID, fmt.Sprintf("%d", index), caseStatus, caseScore, 6, 512); err != nil {
-			return 0, err
+		submissionIDs = append(submissionIDs, practice.ID)
+		result.PracticeSubmissions++
+		for attempt, problemIndex := range []int{contestA, contestB} {
+			item, err := s.submissions.Create(ctx, submission.Actor{ID: account.UserID, AccountType: "permanent", Role: "user"}, "Submit", submission.CreateInput{
+				ContestID: contests[account.Mode], ProblemID: createdProblems[problemIndex].ID,
+				Language: definitions[problemIndex].language, SourceCode: definitions[problemIndex].source,
+			}, fmt.Sprintf("sim-%s-%d-contest-%d", jobID, account.UserID, attempt+1))
+			if err != nil {
+				return SimulationResult{}, nil, ErrUnavailable
+			}
+			submissionIDs = append(submissionIDs, item.ID)
+			result.ContestSubmissions++
 		}
 	}
-	return uint64(submissionID), nil
+	result.TotalSubmissions = len(submissionIDs)
+	result.Pending = len(submissionIDs)
+	return result, submissionIDs, nil
 }
 
-func simulationProblems(suffix string) []simulationProblem {
-	return []simulationProblem{
-		{
-			correct: "#include <iostream>\nint main(){long long a,b;std::cin>>a>>b;std::cout<<a+b<<'\\n';}\n",
-			input:   simulationInput(suffix, 1, "模拟 A+B", "输入两个整数。", "输出两数之和。", "2 3\n", "5\n"),
-			dataset: simulationDataset([][2]string{{"1", "2 3\n|5\n"}, {"2", "-4 9\n|5\n"}}),
-		},
-		{
-			correct: "#include <iostream>\nint main(){int n,x;long long s=0;std::cin>>n;while(n--){std::cin>>x;s+=x;}std::cout<<s<<'\\n';}\n",
-			input:   simulationInput(suffix, 2, "模拟序列求和", "先输入长度 n，再输入 n 个整数。", "输出全部整数之和。", "3\n4 5 6\n", "15\n"),
-			dataset: simulationDataset([][2]string{{"1", "3\n4 5 6\n|15\n"}, {"2", "4\n-1 2 3 10\n|14\n"}}),
-		},
-		{
-			correct: "#include <algorithm>\n#include <iostream>\nint main(){int a,b,c;std::cin>>a>>b>>c;std::cout<<std::max({a,b,c})<<'\\n';}\n",
-			input:   simulationInput(suffix, 3, "模拟三数最大值", "输入三个整数。", "输出其中的最大值。", "8 2 5\n", "8\n"),
-			dataset: simulationDataset([][2]string{{"1", "8 2 5\n|8\n"}, {"2", "-3 -9 -1\n|-1\n"}}),
-		},
+func (s *Service) monitorSimulation(jobID string, actor auth.User) {
+	deadline := time.Now().Add(simulationWait)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		progress, terminal, pending, err := s.simulationProgress(ctx, jobID)
+		if err != nil {
+			s.failSimulation(jobID, "读取真实评测进度失败")
+			return
+		}
+		s.updateSimulation(jobID, func(result *SimulationResult) {
+			result.Progress = progress
+			result.Terminal = terminal
+			result.Pending = pending
+		})
+		if pending == 0 {
+			missing := missingOutcomes(progress)
+			s.updateSimulation(jobID, func(result *SimulationResult) { result.MissingOutcomes = missing })
+			if len(missing) != 0 {
+				s.failSimulation(jobID, "真实评测终态缺少指定结果："+strings.Join(missing, "、"))
+				return
+			}
+			ids := make([]uint64, 0, len(simulationModes))
+			s.simulationMu.Lock()
+			if job := s.simulations[jobID]; job != nil {
+				ids = sortedContestIDs(job.result.Contests)
+			}
+			s.simulationMu.Unlock()
+			for _, contestID := range ids {
+				_, _ = s.db.ExecContext(ctx, `UPDATE contests SET ends_at=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE id=? AND settled_at IS NULL`, contestID)
+				if _, err := s.competition.Settle(ctx, actor, contestID); err != nil {
+					s.failSimulation(jobID, "真实评测完成，但比赛结算失败")
+					return
+				}
+			}
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			s.updateSimulation(jobID, func(result *SimulationResult) {
+				result.Status, result.Complete, result.FinishedAt = "completed", true, &now
+				result.Warnings = append(result.Warnings, "全部比赛均由真实 Worker/Runner 终态结果结算")
+			})
+			return
+		}
+		select {
+		case <-ctx.Done():
+			s.updateSimulation(jobID, func(result *SimulationResult) {
+				result.Status, result.Complete = "failed", false
+				result.Warnings = append(result.Warnings, fmt.Sprintf("超过 5 分钟仍有 %d 条真实评测任务未完成", pending))
+			})
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
-func simulationInput(suffix string, index int, title, input, output, sampleInput, sampleOutput string) problem.Input {
-	return problem.Input{
-		ProblemType: "programming", CheckerMode: "tokens", Title: fmt.Sprintf("%s [%s]", title, strings.ToUpper(suffix)),
-		Description: fmt.Sprintf("## 题目描述\n\n这是测试中心生成的模拟题 %d。数据仅用于验证题库、比赛和排行榜界面。\n\n## 输入\n\n%s\n\n## 输出\n\n%s\n", index, input, output),
-		InputFormat: input, OutputFormat: output, SampleInput: sampleInput, SampleOutput: sampleOutput,
-		TimeLimitMS: 1000, MemoryLimitMB: 256, Difficulty: []string{"easy", "medium", "hard"}[(index-1)%3],
-		Tags: []string{"simulation", "test-center"}, Status: "published", Visibility: "public",
+func (s *Service) simulationProgress(ctx context.Context, jobID string) (map[string]int, int, int, error) {
+	s.simulationMu.Lock()
+	job := s.simulations[jobID]
+	if job == nil {
+		s.simulationMu.Unlock()
+		return nil, 0, 0, ErrNotFound
+	}
+	ids := append([]uint64(nil), job.submissionIDs...)
+	s.simulationMu.Unlock()
+	if len(ids) == 0 {
+		return map[string]int{}, 0, 0, nil
+	}
+	query, args, err := sqlx.In(`SELECT status,COUNT(*) AS count FROM submissions WHERE id IN (?) GROUP BY status`, ids)
+	if err != nil {
+		return nil, 0, 0, ErrUnavailable
+	}
+	var rows []struct {
+		Status string `db:"status"`
+		Count  int    `db:"count"`
+	}
+	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
+		return nil, 0, 0, ErrUnavailable
+	}
+	progress := map[string]int{}
+	terminal := 0
+	for _, row := range rows {
+		progress[row.Status] = row.Count
+		if judge.Terminal(judge.Status(row.Status)) {
+			terminal += row.Count
+		}
+	}
+	return progress, terminal, len(ids) - terminal, nil
+}
+
+func (s *Service) updateSimulation(id string, fn func(*SimulationResult)) {
+	s.simulationMu.Lock()
+	defer s.simulationMu.Unlock()
+	if job := s.simulations[id]; job != nil {
+		fn(&job.result)
 	}
 }
 
-func simulationDataset(cases [][2]string) testcase.Dataset {
-	result := testcase.Dataset{Cases: make([]testcase.Case, 0, len(cases))}
-	for _, item := range cases {
-		parts := strings.SplitN(item[1], "|", 2)
-		input, output := []byte(parts[0]), []byte(parts[1])
-		result.Cases = append(result.Cases, testcase.Case{ID: item[0], Input: input, Output: output, Score: 100 / int64(len(cases))})
-		result.TotalBytes += int64(len(input) + len(output))
-		result.TotalScore += result.Cases[len(result.Cases)-1].Score
+func (s *Service) failSimulation(id, warning string) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	s.updateSimulation(id, func(result *SimulationResult) {
+		result.Status, result.Complete, result.FinishedAt = "failed", false, &now
+		result.Warnings = append(result.Warnings, warning)
+	})
+}
+
+func missingOutcomes(progress map[string]int) []string {
+	missing := []string{}
+	for _, outcome := range requiredSimulation {
+		if progress[outcome] == 0 {
+			missing = append(missing, outcome)
+		}
 	}
-	if result.TotalScore < 100 {
-		result.Cases[len(result.Cases)-1].Score += 100 - result.TotalScore
-		result.TotalScore = 100
+	return missing
+}
+
+func copySimulationResult(source SimulationResult) SimulationResult {
+	result := source
+	result.Contests = map[string]uint64{}
+	for key, value := range source.Contests {
+		result.Contests[key] = value
 	}
-	result.Digest = testcase.Fingerprint(result.Cases)
+	result.Progress = map[string]int{}
+	for key, value := range source.Progress {
+		result.Progress[key] = value
+	}
+	result.Usernames = append([]string(nil), source.Usernames...)
+	result.RequiredOutcomes = append([]string(nil), source.RequiredOutcomes...)
+	result.MissingOutcomes = append([]string(nil), source.MissingOutcomes...)
+	result.Warnings = append([]string(nil), source.Warnings...)
 	return result
 }
 
-func randomHex(bytes int) (string, error) {
-	buffer := make([]byte, bytes)
+func simulationRuntimeReady(ctx context.Context) bool {
+	for _, target := range []string{"http://worker:8081/ready", "http://dispatcher:8082/ready"} {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return false
+		}
+		response, err := simulationHTTPClient.Do(request)
+		if err != nil {
+			return false
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return false
+		}
+	}
+	return true
+}
+
+func simulationErrorText(err error) string {
+	switch {
+	case err == ErrRunnerUnavailable:
+		return "Worker、dispatcher 或 Runner 尚未就绪"
+	case err == ErrUnavailable:
+		return "评测存储或题包服务暂时不可用"
+	default:
+		return "服务返回错误"
+	}
+}
+
+func simulationDefinitions(suffix string) []simulationDefinition {
+	tag := strings.ToUpper(suffix)
+	return []simulationDefinition{
+		simulationDefinitionFor(tag, "接受", "标准 A+B", "2 3\n", "5\n", 1000, 256,
+			"#include <iostream>\nint main(){long long a,b;std::cin>>a>>b;std::cout<<a+b<<'\\n';}\n", "Accepted"),
+		simulationDefinitionFor(tag, "错误答案", "固定错误输出", "2 3\n", "5\n", 1000, 256,
+			"#include <iostream>\nint main(){std::cout<<0<<'\\n';}\n", "WrongAnswer"),
+		simulationDefinitionFor(tag, "超时", "死循环", "2 3\n", "5\n", 200, 256,
+			"#include <cstdint>\nint main(){volatile std::uint64_t x=0;for(;;){++x;}}\n", "TimeLimitExceeded"),
+		simulationDefinitionFor(tag, "内存", "大内存分配", "2 3\n", "5\n", 1000, 32,
+			"#include <iostream>\n#include <vector>\nint main(){std::vector<char> v(128*1024*1024,1);std::cout<<(int)v[0]<<'\\n';}\n", "MemoryLimitExceeded"),
+		simulationDefinitionFor(tag, "运行错误", "空指针崩溃", "2 3\n", "5\n", 1000, 256,
+			"int main(){volatile int *p=nullptr;*p=1;return 0;}\n", "RuntimeError"),
+		simulationDefinitionFor(tag, "编译错误", "故意语法错误", "2 3\n", "5\n", 1000, 256,
+			"int main( { this is not valid c++ }\n", "CompileError"),
+	}
+}
+
+func simulationDefinitionFor(tag, label, title, input, output string, timeMS, memoryMB int64, source, outcome string) simulationDefinition {
+	cases := []testcase.Case{{ID: "1", Input: []byte(input), Output: []byte(output), Score: 100}}
+	dataset := testcase.Dataset{Cases: cases, TotalBytes: int64(len(input) + len(output)), TotalScore: 100}
+	dataset.Digest = testcase.Fingerprint(cases)
+	return simulationDefinition{
+		problem: problem.Input{
+			ProblemType: "programming", CheckerMode: "tokens", Title: fmt.Sprintf("真实测试 %s [%s]", title, tag),
+			Description: fmt.Sprintf("## 题目描述\n\n该题用于验证真实评测结果 `%s`。\n\n## 输入\n\n两个整数。\n\n## 输出\n\n两数之和。", outcome),
+			InputFormat: "两个整数。", OutputFormat: "输出两数之和。", SampleInput: input, SampleOutput: output,
+			TimeLimitMS: timeMS, MemoryLimitMB: memoryMB, Difficulty: "easy",
+			Tags: []string{"simulation", "real-runner", strings.ToLower(outcome)}, Status: "published", Visibility: "public",
+		},
+		dataset: dataset, source: source, language: "cpp17", outcome: outcome,
+	}
+}
+
+func randomHex(length int) (string, error) {
+	buffer := make([]byte, length)
 	if _, err := rand.Read(buffer); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(buffer), nil
+}
+
+// Keep map iteration deterministic where IDs are returned in diagnostics.
+func sortedContestIDs(contests map[string]uint64) []uint64 {
+	ids := make([]uint64, 0, len(contests))
+	for _, id := range contests {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }

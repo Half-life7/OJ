@@ -37,9 +37,24 @@ func reply(c *gin.Context, v any, e error) {
 		case errors.Is(e, ErrForbidden), errors.Is(e, judge.ErrAdminForbidden):
 			status = 403
 			message = "需要超级管理员权限"
+		case errors.Is(e, submission.ErrForbidden):
+			status = 403
+			message = "没有查看该提交的权限"
+		case errors.Is(e, submission.ErrInvalid):
+			status = 400
+			message = "提交筛选参数不合法"
+		case errors.Is(e, submission.ErrNotFound):
+			status = 404
+			message = "提交记录不存在"
 		case errors.Is(e, ErrConflict), errors.Is(e, judge.ErrAdminConflict):
 			status = 409
 			message = "状态已发生变化，请刷新"
+		case errors.Is(e, ErrNotFound):
+			status = 404
+			message = "测试任务不存在"
+		case errors.Is(e, ErrRunnerUnavailable):
+			status = 503
+			message = "Worker、dispatcher 或 Runner 尚未就绪，无法开始真实评测"
 		case errors.Is(e, judge.ErrAdminCapacity):
 			status = 503
 			message = "队列容量不足，请稍后重试"
@@ -97,6 +112,42 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		v, e := h.s.Users(c.Request.Context(), actor(c), after, c.Query("q"))
 		reply(c, v, e)
 	})
+	g.GET("/submissions", func(c *gin.Context) {
+		before, e := number(c.DefaultQuery("before", "0"))
+		if e != nil {
+			reply(c, nil, e)
+			return
+		}
+		problemID, e := number(c.DefaultQuery("problem_id", "0"))
+		if e != nil {
+			reply(c, nil, e)
+			return
+		}
+		contestID, e := number(c.DefaultQuery("contest_id", "0"))
+		if e != nil {
+			reply(c, nil, e)
+			return
+		}
+		limit, e := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		if e != nil {
+			reply(c, nil, ErrInvalid)
+			return
+		}
+		v, e := h.s.AdminSubmissions(c.Request.Context(), actor(c), AdminSubmissionQuery{
+			Before: before, ProblemID: problemID, ContestID: contestID, Limit: limit,
+			Query: c.Query("q"), Kind: c.Query("kind"), Status: c.Query("status"),
+		})
+		reply(c, v, e)
+	})
+	g.GET("/submissions/:id", func(c *gin.Context) {
+		id, e := number(c.Param("id"))
+		if e != nil {
+			reply(c, nil, e)
+			return
+		}
+		v, e := h.s.AdminSubmission(c.Request.Context(), actor(c), id)
+		reply(c, v, e)
+	})
 	g.POST("/rejudge", func(c *gin.Context) {
 		var in judge.RejudgeInput
 		if e := c.ShouldBindWith(&in, httpx.JSONBinding{MaxBytes: 64 << 10}); e != nil {
@@ -136,7 +187,11 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		if !bind(c, &in) {
 			return
 		}
-		v, e := h.s.Simulate(c.Request.Context(), actor(c))
+		v, e := h.s.StartSimulation(c.Request.Context(), actor(c))
+		reply(c, v, e)
+	})
+	g.GET("/simulate/:id", func(c *gin.Context) {
+		v, e := h.s.SimulationStatus(c.Request.Context(), actor(c), c.Param("id"))
 		reply(c, v, e)
 	})
 	g.POST("/users/:id/status", func(c *gin.Context) {

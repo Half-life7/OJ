@@ -11,15 +11,17 @@
 
 ## 管理功能
 
-`/admin` 采用左侧导航和中栏分层工作区："管理概览、测试中心、账号管理、队列与死信、审计与重判"只在当前选中板块加载。概览链接身份、题目、比赛和社区管理页面；测试中心内部再分为“系统检查、初始化与模拟、编辑器、CSV 样例、题包导入”五个子页签。初始化与模拟页可创建明确标记的练习/比赛演示数据、按比赛或题目发起终态提交重判，并执行受固定确认词保护的全业务数据初始化；账号板块提供 ID/姓名/学号搜索、禁用/恢复和提交历史；队列板块提供死信重试与消息隔离；审计板块提供审计读取和短批次手动重判。禁用账号同时增加 token_version 并撤销全部会话；恢复后须重新登录。本人和最后的有效超级管理员不能被禁用；已报废临时账号不能通过此接口重新启用。
+`/admin` 采用左侧导航和右侧单一工作区："管理概览、测试中心、所有提交、账号管理、队列与死信、审计与重判"只在当前选中板块加载。概览链接身份、题目、比赛和社区管理页面；测试中心内部再分为“系统检查、初始化与模拟、编辑器、CSV 样例、题包导入”五个子页签。初始化与模拟页可发起真实 OI/ACM/IOI 小规模执行、按比赛或题目发起终态提交重判，并执行受固定确认词保护的全业务数据初始化；所有提交板块支持全局筛选并在独立详情工作区查看源代码；账号板块提供 ID/姓名/学号搜索、禁用/恢复和提交历史；队列板块提供死信重试与消息隔离；审计板块提供审计读取和短批次手动重判。禁用账号同时增加 token_version 并撤销全部会话；恢复后须重新登录。本人和最后的有效超级管理员不能被禁用；已报废临时账号不能通过此接口重新启用。
 
-`/api/admin/operations` 下的 users、users/:id/status、users/:id/submissions、metrics、audits、dead-letters、dead-letters/:id/retry、quarantine 全部要求当前有效的永久超级管理员。列表默认最多 100 条；users/audits/submissions 的 after 为 ID 游标，quarantine 的 after 为偏移量。后台不返回密码哈希、会话密钥或原始隔离消息。Web 不获得 Docker 权限；Runner 就绪状态经 Worker 验证，日志通过部署 CLI 查看。
+`/api/admin/operations` 下的 users、users/:id/status、users/:id/submissions、submissions、submissions/:id、metrics、audits、dead-letters、dead-letters/:id/retry、quarantine 全部要求当前有效的永久超级管理员。所有提交列表默认 50 条、最多 100 条，使用 `before` ID 游标，可按提交 ID/账号/姓名/题目/比赛搜索，并筛选 kind、状态、题目和比赛；详情返回源代码、输入输出边界和评测摘要。账号提交历史继续使用 `after` 游标，quarantine 的 `after` 为偏移量。后台不返回密码哈希、会话密钥或原始隔离消息。Web 不获得 Docker 权限；Runner 就绪状态经 Worker 验证，日志通过部署 CLI 查看。
 
 范围重判入口为 `POST /api/admin/operations/rejudge/problem` 和 `/rejudge/contest`，请求包含 `key`、`reason` 和唯一作用域 ID。只选择当前 generation 已终态的正式 `Submit`，比赛入口拒绝已结算比赛，单题入口排除已结算比赛中的提交。练习题的新 generation 在同一事务中改用题目当前题面/数据版本，比赛提交继续使用创建时的固定版本；任务每 100 条使用独立幂等键入队，返回排队、跳过和批次数。题目题面保存或测试数据版本发布成功后，前端自动发起题目范围重判；若保存成功但重判失败，会保留已保存版本并单独展示失败原因。
 
-`POST /api/admin/operations/simulate` 创建 3 道公开可用题目、1 场已结算比赛、36 个 active 正式账号，并为每个账号写入 24～40 条练习与比赛终态记录。模拟提交源码带 `BIUE SIMULATION` 标识，响应统一说明“不是真实 Runner 执行结果”，响应中的统一初始密码只显示一次且数据库仅保存 bcrypt 哈希。`POST /api/admin/operations/reset` 要求确认词完全等于“初始化全部业务数据”并填写原因，且在存在 Pending/Queued/Compiling/Running 任务时拒绝。数据库事务保留当前永久超级管理员、其 person/account 关系与会话、迁移表和单行准入锁，删除其他业务数据；提交成功后尽力清理 `oj:*` Redis 键和题目数据存储目录，清理失败返回明确的部分完成结果。
+`POST /api/admin/operations/simulate` 在 Worker、dispatcher 和 Runner 已就绪时异步启动真实小规模执行。它会创建 6 道公开题、OI/ACM/IOI 各 1 场比赛、每场 10 个正式账号，并为 30 个账号各创建 1 条练习提交和 2 条比赛提交，共 90 个 Pending 任务；全部提交走正常 Outbox、Worker 和 Runner，不直接写终态。预定源码覆盖 Accepted、WrongAnswer、TimeLimitExceeded、MemoryLimitExceeded、RuntimeError 和 CompileError。`GET /api/admin/operations/simulate/:id` 在最多 5 分钟内轮询真实状态，只有 90 条全部终态且六种结果都出现时才结束三场比赛并结算；超时、Runner 不可用或结果不完整会保留待处理记录并明确失败，不伪造结果。统一初始密码只在启动响应显示一次，数据库仅保存 bcrypt 哈希。
 
-比赛管理增加 freeze / unfreeze / bulk_status 动作。bulk_status 接受最多 500 个不重复 team_ids、status=active/withdrawn、participant_type=official/star，同事务全部成功或全部回滚。封榜快照追加至 contest_freezes，重复封榜不刷新当前快照；解封仅关闭当前记录。结算后仍能解封，超级管理员仍可授予或撤销比赛管理员，成绩与积分保持锁定。授权管理员一直查看实时成绩。普通成员仍能提交和查看本人结果，但榜单只返回冻结的成绩。
+`POST /api/admin/operations/reset` 要求确认词完全等于“初始化全部业务数据”并填写原因，且在存在 Pending/Queued/Compiling/Running 任务时拒绝。数据库事务保留当前永久超级管理员、其 person/account 关系与会话、迁移表和单行准入锁，删除旧审计后删除其他账号与业务数据，再写入本次重置审计；提交成功后尽力清理 `oj:*` Redis 键和题目数据存储目录，清理失败返回明确的部分完成结果。
+
+比赛管理增加 freeze / unfreeze / bulk_status 动作。bulk_status 接受最多 500 个不重复 team_ids、status=active/withdrawn、participant_type=official/star，同事务全部成功或全部回滚。封榜快照追加至 contest_freezes，重复封榜不刷新当前快照；解封仅关闭当前记录。结算后仍能解封，超级管理员仍可授予或撤销比赛管理员，成绩与积分保持锁定。授权管理员一直查看实时成绩；比赛开始后，非封榜时所有有效登录用户也能查看其他参赛者的实时做题状态。封榜后普通用户只看到冻结快照，普通成员仍能提交和查看本人结果。
 
 CSV 接口：`POST /api/contests/:id/csv/preview` 接收 `{csv}`；至少需要 username/账号，新比赛账号另需姓名和学号，可选学校或组织、队伍、选手类型。解析器自动识别中英文别名、BOM、大小写和首尾空白，返回规范化列映射；未知列或两个别名映射到同一字段时拒绝。UTF-8 最多 256 KiB / 500 行，单次最多创建 200 个新比赛账号。预览逐行报告身份冲突、重复身份、已参赛和队伍人数问题，并为不存在永久账号的选手生成一次性随机初始密码；数据库只保存 bcrypt 哈希，不保存 CSV 明文密码。确认在比赛结束前可执行，事务内创建 person/比赛账号/关系并组队。测试中心可用相同规则生成当前页面样例，不写正式比赛。
 

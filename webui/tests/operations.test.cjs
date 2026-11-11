@@ -137,28 +137,46 @@ async function settle() {
   for (let index = 0; index < 10; index++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-test("test center can create labelled simulation data and reveal credentials once", async () => {
+test("test center starts a real simulation, polls progress and reveals credentials once", async () => {
+  const startedAt = new Date().toISOString();
+  const deadlineAt = new Date(Date.now() + 300000).toISOString();
   const ui = boot(async (url) => {
     if (url === "/api/admin/operations/metrics") return { data: { users: 1, redis_ready: true } };
     if (url === "/api/admin/operations/simulate") return { data: {
-      contest_id: 3, problem_ids: [1, 2, 3], username_prefix: "simabc", initial_password: "sim-once",
-      users: 2, practice_submissions: 12, contest_submissions: 12,
-      usernames: ["simabc01", "simabc02"], simulation_label: "测试中心模拟数据，不是真实 Runner 执行结果",
-      warnings: [], complete: true,
+      id: "job-1", status: "running", started_at: startedAt, deadline_at: deadlineAt,
+      initial_password: "sim-once", users: 30, problems: 6, total_submissions: 90,
+      practice_submissions: 30, contest_submissions: 60, terminal: 0, pending: 90,
+      contests: { OI: 3, ACM: 4, IOI: 5 }, usernames: ["simabc01", "simabc02"],
+      simulation_label: "真实 Worker/Runner 执行的小规模测试", progress: {},
+      warnings: [], complete: false,
+    } };
+    if (url === "/api/admin/operations/simulate/job-1") return { data: {
+      id: "job-1", status: "completed", started_at: startedAt, deadline_at: deadlineAt,
+      users: 30, problems: 6, total_submissions: 90, practice_submissions: 30,
+      contest_submissions: 60, terminal: 90, pending: 0,
+      contests: { OI: 3, ACM: 4, IOI: 5 }, progress: {
+        Accepted: 15, WrongAnswer: 15, TimeLimitExceeded: 15,
+        MemoryLimitExceeded: 15, RuntimeError: 15, CompileError: 15,
+      },
+      missing_outcomes: [], warnings: ["全部比赛均由真实 Worker/Runner 终态结果结算"], complete: true,
     } };
     throw new Error(`unexpected URL ${url}`);
   });
   await settle();
   await ui.elements.get("operations-simulate").trigger("click");
+  await new Promise((resolve) => setTimeout(resolve, 1100));
   await settle();
   const result = ui.elements.get("operations-simulation-result");
-  assert.match(result.textContent, /12 条题库提交 · 12 条比赛提交/);
+  assert.match(result.textContent, /90 条真实提交/);
+  assert.match(result.textContent, /终态 90 \/ 90/);
+  assert.match(result.textContent, /打开 OI 比赛 #3/);
+  assert.match(result.textContent, /真实 Worker\/Runner 终态结果结算/);
   const credentials = result.querySelectorAll("textarea")[0];
   assert.match(credentials.value, /sim-once/);
-  assert.match(result.textContent, /不是真实 Runner 执行结果/);
   const call = ui.calls.find((item) => item.url === "/api/admin/operations/simulate");
   assert.equal(call.method, "POST");
   assert.equal(JSON.parse(call.body).password, undefined);
+  assert.equal(ui.calls.filter((item) => item.url === "/api/admin/operations/simulate/job-1").length, 1);
 });
 
 test("scope rejudge controls submit only the selected scope and show queue totals", async () => {
@@ -201,4 +219,41 @@ test("full initialization requires the exact phrase and reports partial cleanup"
   assert.equal(JSON.parse(ui.calls.find((item) => item.url === "/api/admin/operations/reset").body).reason, "重建验收环境");
   assert.match(ui.elements.get("operations-reset-result").textContent, /Redis oj:\* 缓存未完全清理/);
   assert.match(ui.elements.get("operations-reset-result").textContent, /submissions: 12/);
+});
+
+test("all submissions opens source in a separate detail view", async () => {
+  const ui = boot(async (url) => {
+    if (url === "/api/admin/operations/metrics") return { data: { users: 1 } };
+    if (url.startsWith("/api/admin/operations/submissions?")) return { data: {
+      items: [{
+        id: 44, problem_id: 7, user_id: 9, statement_version: 2, data_version: 3,
+        generation: 1, kind: "Submit", language: "cpp17", status: "Accepted",
+        score: 100, execution_time_ms: 12, memory_usage_kb: 2048, passed_cases: 1,
+        total_cases: 1, created_at: "2026-11-11T10:00:00Z", updated_at: "2026-11-11T10:00:01Z",
+        username: "student9", display_name: "学生九", problem_title: "A+B",
+        contest_id: 2, contest_title: "校内赛",
+      }], next: 0,
+    } };
+    if (url === "/api/admin/operations/submissions/44") return { data: {
+      id: 44, problem_id: 7, user_id: 9, statement_version: 2, data_version: 3,
+      generation: 1, kind: "Submit", language: "cpp17", status: "Accepted",
+      score: 100, execution_time_ms: 12, memory_usage_kb: 2048, passed_cases: 1,
+      total_cases: 1, created_at: "2026-11-11T10:00:00Z", updated_at: "2026-11-11T10:00:01Z",
+      source_code: "#include <iostream>\nint main(){std::cout << \"safe\";}",
+      output: "", error_message: "",
+    } };
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await settle();
+  const form = ui.elements.get("operations-submission-filter");
+  await form.trigger("submit", { submitter: new Element("button") });
+  await settle();
+  assert.match(ui.elements.get("operations-submissions-rows").textContent, /student9/);
+  assert.match(ui.elements.get("operations-submissions-rows").textContent, /校内赛/);
+  ui.elements.get("operations-submissions-rows").querySelectorAll("button")[0].trigger("click");
+  await settle();
+  assert.equal(ui.elements.get("operations-submissions-list-view").hidden, true);
+  assert.equal(ui.elements.get("operations-submission-detail-view").hidden, false);
+  assert.match(ui.elements.get("operations-submission-source").textContent, /std::cout/);
+  assert.match(ui.elements.get("operations-submission-meta").textContent, /2048 KB/);
 });

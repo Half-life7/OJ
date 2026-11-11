@@ -23,6 +23,8 @@ type Submission struct {
 	At                    time.Time
 	Kind, Status          string
 	Score                 int64
+	ExecutionTimeMS       int64
+	MemoryUsageKB         int64
 	Cases                 map[string]int64
 	PassedCases           map[string]bool
 }
@@ -33,13 +35,16 @@ type Input struct {
 	Submissions []Submission
 }
 type ProblemResult struct {
-	Score       int64            `json:"score"`
-	Accepted    bool             `json:"accepted"`
-	Attempts    int64            `json:"attempts"`
-	Wrong       int64            `json:"wrong"`
-	Penalty     int64            `json:"penalty"`
-	Cases       map[string]int64 `json:"cases,omitempty"`
-	PassedCases map[string]bool  `json:"passed_cases,omitempty"`
+	Score           int64            `json:"score"`
+	Accepted        bool             `json:"accepted"`
+	Attempts        int64            `json:"attempts"`
+	Wrong           int64            `json:"wrong"`
+	Penalty         int64            `json:"penalty"`
+	Cases           map[string]int64 `json:"cases,omitempty"`
+	PassedCases     map[string]bool  `json:"passed_cases,omitempty"`
+	ExecutionTimeMS int64            `json:"execution_time_ms"`
+	MemoryUsageKB   int64            `json:"memory_usage_kb"`
+	LastStatus      string           `json:"last_status"`
 }
 type Row struct {
 	TeamID      uint64                    `json:"team_id"`
@@ -163,6 +168,9 @@ func (OI) Calculate(in Input) ([]Row, error) {
 		p := r.Problems[s.ProblemID]
 		r.Submissions++
 		p.Attempts++
+		p.ExecutionTimeMS = s.ExecutionTimeMS
+		p.MemoryUsageKB = s.MemoryUsageKB
+		p.LastStatus = s.Status
 		if s.Score > p.Score {
 			r.Score += s.Score - p.Score
 			p.Score = s.Score
@@ -186,6 +194,9 @@ func (IOI) Calculate(in Input) ([]Row, error) {
 		p := r.Problems[s.ProblemID]
 		r.Submissions++
 		p.Attempts++
+		p.ExecutionTimeMS = s.ExecutionTimeMS
+		p.MemoryUsageKB = s.MemoryUsageKB
+		p.LastStatus = s.Status
 		for id, v := range s.Cases {
 			if p.PassedCases == nil {
 				p.PassedCases = map[string]bool{}
@@ -236,6 +247,9 @@ func (ACM) Calculate(in Input) ([]Row, error) {
 		p := r.Problems[s.ProblemID]
 		r.Submissions++
 		p.Attempts++
+		p.ExecutionTimeMS = s.ExecutionTimeMS
+		p.MemoryUsageKB = s.MemoryUsageKB
+		p.LastStatus = s.Status
 		if p.Accepted {
 			continue
 		}

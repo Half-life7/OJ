@@ -93,7 +93,7 @@ func run() error {
 			submissionHTTP.RegisterRoutes(r)
 			competition.NewHandler(contests, svc).RegisterRoutes(r)
 			community.NewHandler(community.New(db), svc).RegisterRoutes(r)
-			operations.NewHandler(operations.New(db, client, datasets, problems, contests, cfg.JudgeQueueCapacity), svc).RegisterRoutes(r)
+			operations.NewHandler(operations.New(db, client, datasets, problems, contests, submissions, cfg.JudgeQueueCapacity), svc).RegisterRoutes(r)
 		}, UI: ui, Logger: logger,
 	})
 	srv := &http.Server{

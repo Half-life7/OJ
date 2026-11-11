@@ -335,6 +335,7 @@
 
   function showCenter() {
     activePanel = "overview";
+    document.body.classList.remove("wide-workspace");
     byID("contest-detail").hidden = true;
     byID("contest-center").hidden = false;
     switchCenterWorkspace(window.location.hash === "#create" ? "create" : "list", false);
@@ -360,6 +361,7 @@
     if (!view.manager && ["edit", "package", "manage", "import", "accounts", "settle"].includes(name)) name = "overview";
     if (name === "package" && user?.global_role !== "super_admin") name = "overview";
     activePanel = name;
+    document.body.classList.toggle("wide-workspace", ["problems", "standings", "submit"].includes(name));
     for (const button of document.querySelectorAll("[data-contest-panel]")) button.classList.toggle("active", button.dataset.contestPanel === name);
     for (const section of document.querySelectorAll("[data-contest-panel-content]")) section.hidden = section.dataset.contestPanelContent !== name;
     if (name === "manage") loadManageOptions().catch((error) => message("contest-detail-message", error.message));
@@ -463,10 +465,44 @@
       target.append(row);
     }
   }
+  function renderRosterHeader() {
+    const head = byID("contest-roster-head");
+    head.replaceChildren();
+    const labels = ["名次", "队伍", "成员", "状态", "提交", "AC", "总分", "罚时"];
+    for (const label of labels) head.append(node("th", label));
+    for (const problem of view?.problems || []) {
+      const title = problem.statement?.title || `题目 ${problem.problem_id}`;
+      const cell = node("th", `P${problem.problem_id} · ${title}`, "contest-problem-heading-cell");
+      cell.title = title;
+      head.append(cell);
+    }
+  }
+  function resultLabel(status) {
+    return {
+      Accepted: "通过", WrongAnswer: "答案错误", TimeLimitExceeded: "超时",
+      MemoryLimitExceeded: "超内存", RuntimeError: "运行错误", CompileError: "编译错误",
+      SystemError: "系统错误", Cancelled: "已取消",
+    }[status] || (status || "未提交");
+  }
+  function renderProblemResult(point, problem) {
+    if (!point || (!point.attempts && !point.last_status)) return node("span", "未提交");
+    const maximum = Number(problem.max_score || 0);
+    const score = Number(point.score || 0);
+    const duration = Number(point.execution_time_ms || 0);
+    const memory = Number(point.memory_usage_kb || 0);
+    const wrap = node("div", undefined, "contest-problem-result");
+    wrap.append(
+      node("strong", `${resultLabel(point.last_status)} · ${score}${maximum ? "/" + maximum : ""} 分`),
+      node("span", `${point.attempts || 0} 次提交 · ${duration ? duration + " ms" : "耗时—"}`),
+      node("span", `${memory ? Math.round(memory / 1024) + " MiB" : "内存—"}${point.wrong ? ` · ${point.wrong} 次错误` : ""}`),
+    );
+    return wrap;
+  }
   function renderRoster() {
     const target = byID("contest-roster");
     target.replaceChildren();
     if (!view) return;
+    renderRosterHeader();
     const query = byID("contest-search").value.toLowerCase();
     for (const team of view.teams) {
       const row = view.standings.find((entry) => entry.team_id === team.id);
@@ -480,7 +516,21 @@
       if ((row?.submissions || 0) < Number(byID("contest-filter-submissions").value || 0)) continue;
       if (byID("contest-filter-account").value && !view.members.some((member) => member.team_id === team.id && member.identity.Kind === byID("contest-filter-account").value)) continue;
       const tr = node("tr");
-      for (const value of [row?.rank || "—", `${team.name} (#${team.id})`, members, `${team.participant_type} / ${team.status}`, row?.submissions || 0, row?.solved || 0, row?.score || 0, row?.penalty || 0, Object.entries(row?.problems || {}).map(([id, point]) => `${id}: ${point.score}`).join(" / ")]) tr.append(node("td", value));
+      tr.append(
+        node("td", row?.rank || "—"),
+        node("td", `${team.name} (#${team.id})`),
+        node("td", members, "contest-team-members"),
+        node("td", `${team.participant_type} / ${team.status}`),
+        node("td", row?.submissions || 0),
+        node("td", row?.solved || 0),
+        node("td", row?.score || 0),
+        node("td", row?.penalty || 0),
+      );
+      for (const problem of view.problems) {
+        const cell = node("td");
+        cell.append(renderProblemResult(row?.problems?.[problem.problem_id], problem));
+        tr.append(cell);
+      }
       target.append(tr);
     }
   }

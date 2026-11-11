@@ -203,6 +203,23 @@
   let lastListState = null;
   const filter = byID("learning-filter");
   const form = byID("learning-form");
+  function switchLearningWorkspace(name, updateHash = true) {
+    if (!["list", "detail", "editor"].includes(name)) name = "list";
+    if (name === "detail" && !selected) name = "list";
+    if (name === "editor" && !canWrite()) name = "list";
+    byID("learning-list-workspace").hidden = name !== "list";
+    byID("learning-detail").hidden = name !== "detail";
+    byID("learning-editor").hidden = name !== "editor";
+    byID("learning-nav-list").classList.toggle("active", name === "list");
+    byID("learning-nav-detail").classList.toggle("active", name === "detail");
+    byID("learning-nav-editor").classList.toggle("active", name === "editor");
+    byID("learning-nav-detail").disabled = !selected;
+    byID("learning-nav-editor").disabled = !canWrite();
+    if (updateHash && window.history?.replaceState) {
+      const suffix = name === "detail" && selected ? `-${selected.id}` : "";
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${name}${suffix}`);
+    }
+  }
   function previewMarkdown(source) {
     byID("learning-markdown-preview").hidden = false;
     byID("learning-markdown-preview-html").textContent = "正在生成安全预览…";
@@ -341,7 +358,6 @@
     if (disposed || sequence !== detailEpoch) return;
     selected = document;
     editing = false;
-    byID("learning-detail").hidden = false;
     byID("learning-title").textContent = document.title;
     byID("learning-meta").textContent = `${document.username} · ${document.visibility} · ${document.kind} · 修订 ${document.revision}`;
     byID("learning-html").innerHTML = document.html;
@@ -355,6 +371,7 @@
     }
     configureActions(document);
     loadReplies(document).catch((error) => showMessage(error.message));
+    switchLearningWorkspace("detail");
     showMessage("内容已加载。");
   }
   function input() {
@@ -388,12 +405,14 @@
     bodyEditor?.setValue(form.elements.namedItem("body").value);
     savedEditor = formSnapshot();
     editorDirty = false;
+    switchLearningWorkspace("editor");
     form.elements.title.focus?.();
   }
   function configureWriter() {
     byID("learning-new").hidden = !canWrite();
     byID("learning-login").hidden = !!user;
     byID("learning-form").hidden = true;
+    byID("learning-nav-editor").disabled = !canWrite();
     if (!user) {
       byID("learning-access-note").textContent = "游客可以浏览公开内容；登录永久账号后可以发布和互动。";
     } else if (!canWrite()) {
@@ -403,9 +422,21 @@
     }
   }
 
-  filter.onsubmit = (event) => { event.preventDefault(); run(event.submitter, () => list(true)); };
+  filter.onsubmit = (event) => {
+    event.preventDefault();
+    switchLearningWorkspace("list");
+    run(event.submitter, () => list(true));
+  };
   byID("learning-more").onclick = (event) => run(event.target, () => list(false));
   byID("learning-retry").onclick = (event) => run(event.target, () => list(false, true));
+  byID("learning-nav-list").onclick = () => switchLearningWorkspace("list");
+  byID("learning-nav-detail").onclick = () => { if (selected) switchLearningWorkspace("detail"); };
+  byID("learning-nav-editor").onclick = () => {
+    if (!canWrite()) return;
+    if (!selected || byID("learning-form").hidden) showEditor("new");
+    else switchLearningWorkspace("editor");
+  };
+  byID("learning-detail-back").onclick = () => switchLearningWorkspace("list");
   byID("learning-new").onclick = () => showEditor("new");
   byID("learning-edit").onclick = () => showEditor("edit");
   byID("learning-reply").onclick = () => {
@@ -420,6 +451,7 @@
     bodyEditor?.setValue(form.elements.namedItem("body").value);
     savedEditor = formSnapshot();
     editorDirty = false;
+    switchLearningWorkspace("editor");
     byID("learning-editor-title").textContent = `回复 #${selected.id}`;
     form.elements.body.focus?.();
   };
@@ -446,9 +478,9 @@
       await api(`/api/community/${targetID}/actions`, "POST", { action, revision });
       if (action === "delete") {
         if (selected?.id === targetID) {
-          byID("learning-detail").hidden = true;
           selected = null;
           editing = false;
+          switchLearningWorkspace("list");
         }
       } else if (selected?.id === targetID) {
         await open(targetID);
@@ -467,6 +499,14 @@
   }).finally(() => {
     configureWriter();
     hideActions();
-    list(true).catch((error) => showMessage(error.message));
+    list(true).then(() => {
+      const route = /^#detail-(\d+)$/.exec(window.location.hash || "");
+      if (route) return open(route[1]);
+      if (window.location.hash === "#editor" && canWrite()) {
+        showEditor("new");
+        return;
+      }
+      switchLearningWorkspace("list", false);
+    }).catch((error) => showMessage(error.message));
   });
 })();

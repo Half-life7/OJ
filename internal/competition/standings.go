@@ -29,6 +29,7 @@ type ProblemView struct {
 	ID               uint64          `db:"problem_id" json:"problem_id"`
 	StatementVersion uint64          `db:"statement_version" json:"statement_version"`
 	DataVersion      uint64          `db:"data_version" json:"data_version"`
+	MaxScore         int64           `db:"max_score" json:"max_score"`
 	Statement        json.RawMessage `db:"snapshot_json" json:"statement"`
 }
 type View struct {
@@ -71,20 +72,26 @@ func readInput(ctx context.Context, tx *sqlx.Tx, c Contest) (scoring.Input, erro
 		in.Problems[len(in.Problems)-1].Cases[p.ID] = p.Score
 	}
 	var subs []struct {
-		ID      uint64    `db:"id"`
-		Team    uint64    `db:"contest_team_id"`
-		Problem uint64    `db:"problem_id"`
-		At      time.Time `db:"created_at"`
-		Status  string    `db:"status"`
-		Score   int64     `db:"score"`
+		ID       uint64    `db:"id"`
+		Team     uint64    `db:"contest_team_id"`
+		Problem  uint64    `db:"problem_id"`
+		At       time.Time `db:"created_at"`
+		Status   string    `db:"status"`
+		Score    int64     `db:"score"`
+		TimeMS   int64     `db:"execution_time_ms"`
+		MemoryKB int64     `db:"memory_usage_kb"`
 	}
-	if err := tx.SelectContext(ctx, &subs, `SELECT s.id,s.contest_team_id,s.problem_id,s.created_at,r.status,r.score FROM submissions s JOIN submission_results r ON r.submission_id=s.id AND r.generation=s.generation WHERE s.contest_id=? AND s.kind='Submit' AND s.status=r.status ORDER BY s.created_at,s.id`, c.ID); err != nil {
+	if err := tx.SelectContext(ctx, &subs, `SELECT s.id,s.contest_team_id,s.problem_id,s.created_at,r.status,r.score,r.execution_time_ms,r.memory_usage_kb FROM submissions s JOIN submission_results r ON r.submission_id=s.id AND r.generation=s.generation WHERE s.contest_id=? AND s.kind='Submit' AND s.status=r.status ORDER BY s.created_at,s.id`, c.ID); err != nil {
 		return in, err
 	}
 	index := map[uint64]int{}
 	for _, s := range subs {
 		index[s.ID] = len(in.Submissions)
-		in.Submissions = append(in.Submissions, scoring.Submission{ID: s.ID, TeamID: s.Team, ProblemID: s.Problem, At: s.At, Kind: "Submit", Status: s.Status, Score: s.Score, Cases: map[string]int64{}})
+		in.Submissions = append(in.Submissions, scoring.Submission{
+			ID: s.ID, TeamID: s.Team, ProblemID: s.Problem, At: s.At, Kind: "Submit",
+			Status: s.Status, Score: s.Score, ExecutionTimeMS: s.TimeMS, MemoryUsageKB: s.MemoryKB,
+			Cases: map[string]int64{},
+		})
 	}
 	var results []struct {
 		Submission uint64 `db:"submission_id"`
@@ -139,7 +146,7 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 	if err = tx.GetContext(ctx, &member, `SELECT EXISTS(SELECT 1 FROM contest_team_members WHERE contest_id=? AND user_id=?)`, id, a.ID); err != nil {
 		return v, ErrUnavailable
 	}
-	if !manager && !member {
+	if !manager && !member && s.now().Before(c.Start) {
 		return v, nil
 	}
 	if err = tx.SelectContext(ctx, &v.Teams, `SELECT id,name,participant_type,status,created_at FROM contest_teams WHERE contest_id=? ORDER BY id`, id); err != nil {
@@ -159,7 +166,10 @@ func (s *Service) View(ctx context.Context, a auth.User, id uint64) (View, error
 		v.ProblemAttempts[attempt.Problem] = attempt.Count
 	}
 	if manager || !s.now().Before(c.Start) {
-		if err = tx.SelectContext(ctx, &v.Problems, `SELECT cp.problem_id,cp.statement_version,cp.data_version,pv.snapshot_json FROM contest_problems cp JOIN problem_versions pv ON pv.problem_id=cp.problem_id AND pv.version=cp.statement_version WHERE cp.contest_id=? ORDER BY cp.problem_id`, id); err != nil {
+		if err = tx.SelectContext(ctx, &v.Problems, `SELECT cp.problem_id,cp.statement_version,cp.data_version,pv.snapshot_json,
+			COALESCE((SELECT SUM(tc.score) FROM testcases tc WHERE tc.problem_id=cp.problem_id AND tc.data_version=cp.data_version),0) AS max_score
+			FROM contest_problems cp JOIN problem_versions pv ON pv.problem_id=cp.problem_id AND pv.version=cp.statement_version
+			WHERE cp.contest_id=? ORDER BY cp.problem_id`, id); err != nil {
 			return v, ErrUnavailable
 		}
 		for i := range v.Problems {

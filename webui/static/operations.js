@@ -19,6 +19,9 @@
   let packageSelection = null;
   let importedPackage = null;
   let csvSample = "";
+  let submissionsBefore = 0;
+  const submissionRows = new Map();
+  let simulationPollTimer = 0;
   const loaded = new Set();
 
   class APIError extends Error {
@@ -130,12 +133,19 @@
       button.className = "button secondary";
       button.addEventListener("click", () => {
         for (const id of ["operations-status", "operations-history"]) $(id).elements.id.value = user.id;
+        $("operations-account-heading").textContent = `账号 #${user.id} · ${user.username}`;
+        $("operations-accounts-list-view").hidden = true;
+        $("operations-accounts-detail-view").hidden = false;
       });
       $("operations-users").append(button);
       usersAfter = user.id;
     }
     $("operations-users-more").hidden = rows.length < 100;
     loaded.add("accounts");
+  }
+  function showAccountList() {
+    $("operations-accounts-list-view").hidden = false;
+    $("operations-accounts-detail-view").hidden = true;
   }
   async function audits(more = false) {
     if (!more) {
@@ -157,6 +167,97 @@
     $("operations-quarantine").replaceChildren();
     for (const item of isolated) $("operations-quarantine").append(node("p", `隔离 ${item.stream_id} · ${item.payload_digest.slice(0, 12)} · ${item.reason}`));
     loaded.add("queues");
+  }
+  function submissionStatusLabel(status) {
+    return {
+      Pending: "等待", Queued: "已入队", Compiling: "编译中", Running: "运行中",
+      Accepted: "通过", WrongAnswer: "答案错误", TimeLimitExceeded: "超时",
+      MemoryLimitExceeded: "超内存", RuntimeError: "运行错误", CompileError: "编译错误",
+      SystemError: "系统错误", Cancelled: "已取消",
+    }[status] || status;
+  }
+  async function loadSubmissions(reset = false) {
+    if (reset) {
+      submissionsBefore = 0;
+      $("operations-submissions-rows").replaceChildren();
+      submissionRows.clear();
+    }
+    const values = Object.fromEntries(new FormData($("operations-submission-filter")));
+    const query = new URLSearchParams({ before: String(submissionsBefore), limit: "50" });
+    for (const [key, value] of Object.entries(values)) if (String(value).trim()) query.set(key, String(value).trim());
+    $("operations-submissions-message").hidden = true;
+    const page = await api(`/api/admin/operations/submissions?${query}`);
+    for (const row of page.items || []) {
+      submissionRows.set(row.id, row);
+      const tr = node("tr");
+      const idCell = node("td");
+      const open = node("button", `#${row.id}`, "text-button");
+      open.type = "button";
+      open.addEventListener("click", () => openSubmission(row.id));
+      idCell.append(open);
+      tr.append(
+        idCell, node("td", `${row.username} / ${row.display_name}`),
+        node("td", `${row.problem_id} · ${row.problem_title}`),
+        node("td", row.contest_id ? `#${row.contest_id} · ${row.contest_title}` : "题库"),
+        node("td", `${row.kind} / ${row.language}`),
+        node("td", submissionStatusLabel(row.status)),
+        node("td", row.score), node("td", `${row.execution_time_ms} ms`), node("td", row.created_at),
+      );
+      $("operations-submissions-rows").append(tr);
+      submissionsBefore = row.id;
+    }
+    if ((page.items || []).length === 0) {
+      const tr = node("tr");
+      const td = node("td", "没有找到符合条件的提交。");
+      td.colSpan = 9;
+      tr.append(td);
+      $("operations-submissions-rows").append(tr);
+    }
+    $("operations-submissions-more").hidden = !page.next;
+    loaded.add("submissions");
+  }
+  function showSubmissionListView(updateHash = true) {
+    $("operations-submissions-list-view").hidden = false;
+    $("operations-submission-detail-view").hidden = true;
+    if (updateHash) window.history.replaceState(null, "", "#submissions");
+  }
+  async function openSubmission(id, updateHash = true) {
+    const row = submissionRows.get(Number(id));
+    $("operations-submissions-list-view").hidden = true;
+    $("operations-submission-detail-view").hidden = false;
+    $("operations-submission-heading").textContent = `提交 #${id}`;
+    $("operations-submission-summary").replaceChildren();
+    $("operations-submission-meta").replaceChildren();
+    $("operations-submission-source").textContent = "正在读取源代码…";
+    $("operations-submission-detail-message").hidden = true;
+    $("operations-submission-run").hidden = true;
+    $("operations-submission-error-section").hidden = true;
+    if (updateHash) window.history.replaceState(null, "", `#submissions-${id}`);
+    const detail = await api(`/api/admin/operations/submissions/${encodeURIComponent(id)}`);
+    $("operations-submission-summary").append(node("span", submissionStatusLabel(detail.status), "problem-badge"));
+    for (const [label, value] of [
+      ["账号", row ? `${row.username} / ${row.display_name}` : `#${detail.user_id}`],
+      ["题目", row ? `#${row.problem_id} · ${row.problem_title}` : `#${detail.problem_id}`],
+      ["比赛", row?.contest_id ? `#${row.contest_id} · ${row.contest_title}` : "题库"],
+      ["类型", detail.kind], ["语言", detail.language], ["generation", detail.generation],
+      ["得分", detail.score], ["耗时", `${detail.execution_time_ms} ms`],
+      ["内存", `${detail.memory_usage_kb} KB`], ["用例", `${detail.passed_cases} / ${detail.total_cases}`],
+      ["创建", detail.created_at],
+    ]) {
+      const item = node("div");
+      item.append(node("dt", label), node("dd", value));
+      $("operations-submission-meta").append(item);
+    }
+    $("operations-submission-source").textContent = detail.source_code || "";
+    if (detail.kind === "Run") {
+      $("operations-submission-run").hidden = false;
+      $("operations-submission-stdin").textContent = detail.stdin || "";
+      $("operations-submission-output").textContent = detail.output || "";
+    }
+    if (detail.error_message) {
+      $("operations-submission-error-section").hidden = false;
+      $("operations-submission-error").textContent = detail.error_message;
+    }
   }
 
   function testRow(label, status, detail, elapsed = null, requestID = lastRequestID) {
@@ -308,13 +409,24 @@
   }
 
   function switchPanel(name) {
+    const requestedHash = name;
+    const submissionRoute = /^submissions-(\d+)$/.exec(name);
+    if (submissionRoute) name = "submissions";
     if (!document.querySelector(`[data-operations-panel='${name}']`)) name = "overview";
     activePanel = name;
     for (const button of document.querySelectorAll("[data-operations-panel]")) button.classList.toggle("active", button.dataset.operationsPanel === name);
     for (const panel of document.querySelectorAll("[data-operations-panel-content]")) panel.hidden = panel.dataset.operationsPanelContent !== name;
-    window.history.replaceState(null, "", `#${name}`);
+    window.history.replaceState(null, "", `#${submissionRoute ? requestedHash : name}`);
     if (name === "test") {
       if (activeTestPanel === "editors") initializeEditors();
+    }
+    if (name === "submissions") {
+      if (!loaded.has("submissions")) run($("operations-submission-filter").querySelector("button"), () => loadSubmissions(true));
+      else showSubmissionListView(false);
+      if (submissionRoute) openSubmission(submissionRoute[1], false).catch((error) => {
+        $("operations-submission-detail-message").textContent = error.message;
+        $("operations-submission-detail-message").hidden = false;
+      });
     }
     if (name === "accounts" && !loaded.has("accounts")) run($("operations-search").querySelector("button"), () => users(true));
     if (name === "queues" && !loaded.has("queues")) run($("operations-queue-refresh"), queue);
@@ -334,6 +446,7 @@
   }
 
   form("operations-search", () => users(true));
+  $("operations-accounts-back").onclick = showAccountList;
   form("operations-status", async (data) => {
     await api(`/api/admin/operations/users/${data.id}/status`, "POST", { status: data.status, reason: data.reason });
     await users(true);
@@ -349,6 +462,12 @@
       $("operations-history-list").append(paragraph);
     }
   });
+  form("operations-submission-filter", () => {
+    showSubmissionListView();
+    return loadSubmissions(true);
+  });
+  $("operations-submissions-more").onclick = (event) => run(event.target, () => loadSubmissions(false));
+  $("operations-submission-back").onclick = () => showSubmissionListView();
   form("operations-retry", async (data) => {
     await api(`/api/admin/operations/dead-letters/${data.id}/retry`, "POST", { generation: Number(data.generation) });
     await queue();
@@ -370,23 +489,64 @@
       $("operations-rejudge-result").append(paragraph);
     }
   });
+  function renderSimulation(result, includeCredentials = false) {
+    const target = $("operations-simulation-result");
+    if (includeCredentials) {
+      target.replaceChildren();
+      const credentials = node("textarea", undefined, "operations-credentials");
+      credentials.readOnly = true;
+      credentials.rows = 10;
+      credentials.value = `真实测试账号（共 ${result.users} 个）：\n${result.usernames.join("\n")}\n\n统一初始密码：${result.initial_password}\n` +
+        "\n以下凭据只在本次启动响应中显示，请立即保存；服务端只保存密码哈希。";
+      target.append(node("p", "以下凭据只显示一次。", "field-help"), credentials);
+    }
+    let progress = Array.from(target.children).find((child) => child.id === "operations-simulation-progress");
+    if (!progress) {
+      progress = node("div");
+      progress.id = "operations-simulation-progress";
+      target.append(progress);
+    }
+    progress.dataset.jobId = result.id;
+    progress.replaceChildren(
+      node("h3", result.status === "completed" ? "真实评测与三场结算完成" : result.status === "failed" ? "真实评测未完成" : "真实评测进行中"),
+      node("p", `${result.users} 个账号 · ${result.problems} 道题 · ${result.total_submissions} 条真实提交（练习 ${result.practice_submissions}、比赛 ${result.contest_submissions}）`),
+      node("p", `终态 ${result.terminal || 0} / ${result.total_submissions || 0} · 未完成 ${result.pending || 0} · 截止 ${new Date(result.deadline_at).toLocaleString()}`, result.status === "failed" ? "test-fail" : result.status === "completed" ? "test-pass" : ""),
+      node("p", Object.entries(result.progress || {}).map(([status, count]) => `${submissionStatusLabel(status)} ${count}`).join(" · ") || "正在等待 Worker/Runner 返回终态…", "operations-simulation-progress-line"),
+    );
+    const links = node("div", undefined, "learning-actions");
+    for (const [mode, contestID] of Object.entries(result.contests || {})) {
+      const link = node("a", `打开 ${mode} 比赛 #${contestID}`, "button secondary");
+      link.href = `/contests/${contestID}`;
+      links.append(link);
+    }
+    progress.append(links);
+    if (result.missing_outcomes?.length) progress.append(node("p", `缺少真实终态：${result.missing_outcomes.join("、")}`, "test-fail"));
+    for (const warning of result.warnings || []) progress.append(node("p", warning, result.status === "failed" ? "test-fail" : "field-help"));
+  }
+  async function pollSimulation(id) {
+    clearTimeout(simulationPollTimer);
+    try {
+      const result = await api(`/api/admin/operations/simulate/${encodeURIComponent(id)}`);
+      renderSimulation(result);
+      $("operations-simulation-message").textContent = result.status === "completed"
+        ? "三种赛制均由真实 Worker/Runner 完成并结算。"
+        : result.status === "failed"
+          ? "真实评测未完成；系统没有伪造终态，请按进度与队列诊断。"
+          : "真实评测进行中，页面每 2 秒更新进度。";
+      $("operations-simulation-message").hidden = false;
+      if (!["completed", "failed"].includes(result.status)) simulationPollTimer = setTimeout(() => pollSimulation(id), 2000);
+    } catch (error) {
+      $("operations-simulation-message").textContent = error.message;
+      $("operations-simulation-message").hidden = false;
+      simulationPollTimer = setTimeout(() => pollSimulation(id), 5000);
+    }
+  }
   $("operations-simulate").onclick = (event) => run(event.target, async () => {
     const result = await api("/api/admin/operations/simulate", "POST", {});
-    const target = $("operations-simulation-result");
-    target.replaceChildren(node("h3", "模拟数据已创建"), node("p", `${result.users} 个账号 · ${result.practice_submissions} 条题库提交 · ${result.contest_submissions} 条比赛提交。`), node("p", result.simulation_label, "test-pass"));
-    const contestLink = node("a", `打开模拟比赛 #${result.contest_id}`);
-    contestLink.href = `/contests/${result.contest_id}`;
-    target.append(contestLink);
-    for (const warning of result.warnings || []) target.append(node("p", warning, "test-fail"));
-    const credentials = node("textarea", undefined, "operations-credentials");
-    credentials.readOnly = true;
-    credentials.rows = 8;
-    credentials.value = `账号范围：${result.username_prefix}01 ～ ${result.username_prefix}${String(result.users).padStart(2, "0")}\n统一初始密码：${result.initial_password}\n\n${result.usernames.join("\n")}`;
-    target.append(node("p", "以下凭据只在本次响应中显示，请立即保存；服务端只保存密码哈希。", "field-help"), credentials);
-    $("operations-simulation-message").textContent = result.complete
-      ? "模拟完成。练习榜、比赛榜和模拟比赛已可直接验收。"
-      : "模拟数据已写入，但存在未完成步骤，请按提示核对。";
+    renderSimulation(result, true);
+    $("operations-simulation-message").textContent = "真实评测已启动，最多等待 5 分钟；进度会持续更新。";
     $("operations-simulation-message").hidden = false;
+    simulationPollTimer = setTimeout(() => pollSimulation(result.id), 1000);
   });
   for (const [id, field] of [["operations-rejudge-contest", "contest_id"], ["operations-rejudge-problem", "problem_id"]]) {
     $(id).addEventListener("submit", (event) => {

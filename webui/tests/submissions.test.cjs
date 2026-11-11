@@ -65,7 +65,7 @@ function boot(page, respond, options = {}) {
   const calls = [], timers = new Map(), handlers = new Map();
   let nextTimer = 0, reloads = 0;
   const document = {
-    body: { dataset: { page } }, title: "Biue OJ",
+    body: { dataset: { page }, classList: { toggle() {} } }, title: "Biue OJ",
     getElementById(id) { assert.ok(elements.has(id), "missing template ID " + id); return elements.get(id); },
     createElement: (tag) => new Element(tag),
   };

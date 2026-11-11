@@ -140,7 +140,7 @@ function boot(responses, pathname = "/contests", page = "contests") {
 
   const all = () => [...new Set(elements.values())];
   const document = {
-    body: { dataset: { page } },
+    body: { dataset: { page }, classList: { toggle() {} } },
     title: "",
     getElementById(id) { assert.ok(elements.has(id), `missing template ID ${id}`); return elements.get(id); },
     createElement(tag) { return new Element(tag); },
@@ -302,7 +302,10 @@ test("answer sheet marks formal submissions and opens the focused problem editor
     { problem_id: 2, statement_version: 2, data_version: 3, statement: { title: "Open", description: "Open statement", description_html: "<p>Open statement</p>" } },
   ];
   current.problem_attempts = { 1: 1, 2: 0 };
-  current.standings = [{ team_id: 10, rank: 1, submissions: 1, problems: { 1: { attempts: 1, accepted: false, score: 0 }, 2: { attempts: 0, accepted: false, score: 0 } } }];
+  current.standings = [{ team_id: 10, rank: 1, submissions: 1, score: 0, solved: 0, penalty: 0, problems: {
+    1: { attempts: 1, accepted: false, score: 0, execution_time_ms: 12, memory_usage_kb: 2048, last_status: "WrongAnswer", wrong: 1 },
+    2: { attempts: 0, accepted: false, score: 0, execution_time_ms: 0, memory_usage_kb: 0, last_status: "" },
+  } }];
   const ui = boot(async (url) => {
     if (url === "/api/users/me") return { data: user };
     if (url === "/api/contests?before=0") return { data: [record] };
@@ -314,6 +317,9 @@ test("answer sheet marks formal submissions and opens the focused problem editor
   assert.equal(ui.elements.get("contest-submit-button").disabled, true);
   assert.match(ui.elements.get("contest-answer-sheet").textContent, /1\. Written已写/);
   assert.match(ui.elements.get("contest-answer-sheet").textContent, /2\. Open未写/);
+  assert.match(ui.elements.get("contest-roster-head").textContent, /P1 · Written/);
+  assert.match(ui.elements.get("contest-roster").textContent, /12 ms/);
+  assert.match(ui.elements.get("contest-roster").textContent, /2 MiB/);
   const answer = ui.elements.get("contest-answer-sheet").querySelectorAll("button")[1];
   answer.trigger("click");
   await settle();

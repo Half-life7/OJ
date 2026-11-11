@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -78,6 +79,7 @@ func (s *Service) Reset(ctx context.Context, a auth.User, input ResetInput, requ
 	// Problem rows and their immutable versions reference each other. Release
 	// both nullable pointers before deleting either side of that cycle.
 	if _, err := tx.ExecContext(ctx, `UPDATE problems SET statement_version=NULL,data_version=NULL`); err != nil {
+		slog.Error("operations reset failed", "step", "problem pointers", "error", err)
 		return ResetResult{}, ErrUnavailable
 	}
 	result := ResetResult{Deleted: map[string]int64{}, Warnings: []string{}}
@@ -117,13 +119,23 @@ func (s *Service) Reset(ctx context.Context, a auth.User, input ResetInput, requ
 	}
 	for _, table := range tables {
 		if err := countDelete(ctx, tx, result.Deleted, table); err != nil {
+			slog.Error("operations reset failed", "step", table, "error", err)
 			return ResetResult{}, ErrUnavailable
 		}
 	}
 	if err := countDelete(ctx, tx, result.Deleted, "problems"); err != nil {
+		slog.Error("operations reset failed", "step", "problems", "error", err)
 		return ResetResult{}, ErrUnavailable
 	}
 	if err := countDelete(ctx, tx, result.Deleted, "student_no_history"); err != nil {
+		slog.Error("operations reset failed", "step", "student_no_history", "error", err)
+		return ResetResult{}, ErrUnavailable
+	}
+	// audit_logs.actor_user_id uses ON DELETE RESTRICT, so clear the old audit
+	// trail before removing other users. A new reset audit is written after the
+	// cleanup and continues to reference the preserved administrator.
+	if err := countDelete(ctx, tx, result.Deleted, "audit_logs"); err != nil {
+		slog.Error("operations reset failed", "step", "audit_logs", "error", err)
 		return ResetResult{}, ErrUnavailable
 	}
 	scoped := []struct {
@@ -139,6 +151,7 @@ func (s *Service) Reset(ctx context.Context, a auth.User, input ResetInput, requ
 	for _, item := range scoped {
 		rows, err := tx.ExecContext(ctx, item.sql, item.arg)
 		if err != nil {
+			slog.Error("operations reset failed", "step", item.name, "error", err)
 			return ResetResult{}, ErrUnavailable
 		}
 		count, err := rows.RowsAffected()
@@ -146,9 +159,6 @@ func (s *Service) Reset(ctx context.Context, a auth.User, input ResetInput, requ
 			return ResetResult{}, ErrUnavailable
 		}
 		result.Deleted[item.name] = count
-	}
-	if err := countDelete(ctx, tx, result.Deleted, "audit_logs"); err != nil {
-		return ResetResult{}, ErrUnavailable
 	}
 	details, _ := json.Marshal(map[string]any{"reason": strings.TrimSpace(input.Reason), "deleted": result.Deleted})
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(actor_user_id,action,object_type,object_id,request_id,details,created_at) VALUES (?,'operations.reset','system',0,?,?,UTC_TIMESTAMP(6))`, a.ID, requestID, string(details)); err != nil {

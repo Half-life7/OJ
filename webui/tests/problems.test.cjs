@@ -358,6 +358,33 @@ test("management uses independent URL-backed workspaces and automatically rejudg
   assert.match(ui.elements.get("problem-editor-message").textContent, /自动重测已排队 4 条/);
 });
 
+test("data version detail replaces the version list in an independent workspace", async () => {
+  const version = { data_version: 3, case_count: 2, total_score: 100, total_bytes: 42, created_at: sample.created_at };
+  const ui = boot("admin-problems", async (url) => {
+    if (url === "/api/users/me") return { data: { global_role: "super_admin" } };
+    if (url.startsWith("/api/admin/problems?")) return { data: { items: [sample], page: 1, limit: 20, total: 1 } };
+    if (url === "/api/admin/problems/7") return { data: sample };
+    if (url === "/api/admin/problems/7/data-versions?page=1&limit=20") return { data: { items: [version], page: 1, limit: 20, total: 1 } };
+    if (url === "/api/admin/problems/7/data-versions/3") return { data: {
+      data_version: 3, digest: "version-digest",
+      cases: [{ id: "1", score: 40, input_bytes: 4, output_bytes: 2 }, { id: "2", score: 60, input_bytes: 5, output_bytes: 3 }],
+    } };
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await settle();
+  await ui.elements.get("admin-problem-list").querySelectorAll("button")[0].trigger("click");
+  await settle();
+  ui.elements.get("problem-nav-versions").trigger("click");
+  await settle();
+  await ui.elements.get("problem-version-list").querySelectorAll("button")[0].trigger("click");
+  await settle();
+  assert.equal(ui.elements.get("problem-versions-workspace").hidden, true);
+  assert.equal(ui.elements.get("problem-version-detail-workspace").hidden, false);
+  assert.match(ui.elements.get("problem-version-detail").textContent, /version-digest/);
+  assert.match(ui.elements.get("problem-version-detail").textContent, /60/);
+  assert.match(ui.historyValue || "", /#version-detail-7-3$/);
+});
+
 test("score table accepts zero points but blocks invalid and all-zero totals", async () => {
   for (const scores of [["-1"], ["1.5"], ["9223372036854775808"], ["0", "0"]]) {
     const ui = boot("admin-problems", async (url, options) => {

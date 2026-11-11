@@ -316,6 +316,7 @@
       const workspace = byID("problem-workspace");
       const enabled = !workspace.classList.contains("is-editing");
       workspace.classList.toggle("is-editing", enabled);
+      document.body.classList.toggle("wide-workspace", enabled);
       byID("problem-edit-mode").setAttribute("aria-pressed", String(enabled));
       byID("problem-edit-mode").textContent = enabled ? "退出编辑模式" : "开启编辑模式";
       window.setTimeout(() => editor?.requestMeasure?.(), 0);

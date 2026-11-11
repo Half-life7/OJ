@@ -139,12 +139,16 @@ test("late community detail response cannot replace a newer selection", async ()
     throw new Error(`unexpected ${url}`);
   });
   await settle();
+  assert.equal(ui.elements.get("learning-list-workspace").hidden, false);
+  assert.equal(ui.elements.get("learning-detail").hidden, true);
   const buttons = ui.elements.get("learning-list").children;
   assert.ok(buttons.length >= 2, JSON.stringify(ui.calls));
   buttons[0].trigger("click");
   buttons[1].trigger("click");
   await settle(50);
   assert.equal(ui.elements.get("learning-title").textContent, second.title);
+  assert.equal(ui.elements.get("learning-list-workspace").hidden, true);
+  assert.equal(ui.elements.get("learning-detail").hidden, false);
   assert.equal(ui.elements.get("learning-edit").hidden, true);
   assert.equal(ui.elements.get("learning-delete").hidden, true);
 });

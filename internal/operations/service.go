@@ -8,6 +8,7 @@ import (
 	"biue/internal/problem"
 	"biue/internal/problemdata"
 	"biue/internal/server"
+	"biue/internal/submission"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -25,20 +27,28 @@ var ErrForbidden = errors.New("administrator required")
 var ErrInvalid = errors.New("invalid administrative request")
 var ErrConflict = errors.New("administrative state conflict")
 var ErrUnavailable = errors.New("administrative storage unavailable")
+var ErrNotFound = errors.New("administrative object not found")
+var ErrRunnerUnavailable = errors.New("worker dispatcher or runner unavailable")
 
 type Service struct {
-	db          *sqlx.DB
-	redis       *redis.Client
-	data        *problemdata.Store
-	problems    *problem.Service
-	competition *competition.Service
-	judge       *judge.JudgeAdmin
-	capacity    int
+	db           *sqlx.DB
+	redis        *redis.Client
+	data         *problemdata.Store
+	problems     *problem.Service
+	competition  *competition.Service
+	submissions  *submission.Service
+	judge        *judge.JudgeAdmin
+	capacity     int
+	simulationMu sync.Mutex
+	simulations  map[string]*simulationJob
 }
 
-func New(db *sqlx.DB, r *redis.Client, data *problemdata.Store, problems *problem.Service, contests *competition.Service, capacity int) *Service {
+func New(db *sqlx.DB, r *redis.Client, data *problemdata.Store, problems *problem.Service, contests *competition.Service, submissions *submission.Service, capacity int) *Service {
 	j, _ := judge.NewJudgeAdmin(db, capacity)
-	return &Service{db: db, redis: r, data: data, problems: problems, competition: contests, judge: j, capacity: capacity}
+	return &Service{
+		db: db, redis: r, data: data, problems: problems, competition: contests, submissions: submissions,
+		judge: j, capacity: capacity, simulations: make(map[string]*simulationJob),
+	}
 }
 func (s *Service) authorized(ctx context.Context, a auth.User) error {
 	var ok bool

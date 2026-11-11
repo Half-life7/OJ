@@ -29,7 +29,7 @@ const local = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 600
 
     await page.goto(env.PUBLIC_URL + "/admin");
     await page.locator("#operations-content").waitFor({ state: "visible" });
-    assert.equal(await page.locator("[data-operations-panel]").count(), 5);
+    assert.equal(await page.locator("[data-operations-panel]").count(), 6);
     assert.equal(await page.locator("[data-operations-panel-content]:visible").count(), 1);
     await page.locator("[data-operations-panel='test']").click();
     await page.locator("[data-operations-panel-content='test']").waitFor({ state: "visible" });
